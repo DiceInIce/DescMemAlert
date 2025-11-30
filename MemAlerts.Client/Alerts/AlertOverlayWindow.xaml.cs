@@ -41,21 +41,12 @@ public partial class AlertOverlayWindow : Window
 
     private void OverlayPlayer_OnMediaOpened(object sender, RoutedEventArgs e)
     {
-        if (OverlayPlayer.NaturalVideoWidth > 0 && OverlayPlayer.NaturalVideoHeight > 0)
+        // Размещаем окно после того, как оно получило свои размеры
+        Dispatcher.BeginInvoke(new Action(() =>
         {
-            var scaledWidth = OverlayPlayer.NaturalVideoWidth * 0.4;
-            var scaledHeight = OverlayPlayer.NaturalVideoHeight * 0.4;
-            
-            OverlayPlayer.Width = scaledWidth;
-            OverlayPlayer.Height = scaledHeight;
-            
-            // Размещаем окно после того, как оно получило свои размеры
-            Dispatcher.BeginInvoke(new Action(() =>
-            {
-                UpdateLayout();
-                PositionWindowRandomly();
-            }), System.Windows.Threading.DispatcherPriority.Loaded);
-        }
+            UpdateLayout();
+            PositionWindowRandomly();
+        }), System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     private void PositionWindowRandomly()

@@ -45,11 +45,13 @@
                             CornerRadius="12"
                             BorderBrush="{StaticResource BorderColor}"
                             BorderThickness="1"
-                            Padding="2">
+                            Padding="2"
+                            MaxWidth="640"
+                            MaxHeight="360">
                         <MediaElement x:Name="OverlayPlayer"
                                       LoadedBehavior="Manual"
                                       UnloadedBehavior="Manual"
-                                      Stretch="None"
+                                      Stretch="Uniform"
                                       MediaEnded="OverlayPlayer_OnMediaEnded"
                                       MediaOpened="OverlayPlayer_OnMediaOpened" />
                     </Border>
