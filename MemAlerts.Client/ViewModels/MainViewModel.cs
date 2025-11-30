@@ -18,9 +18,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly AlertOverlayManager _overlayManager;
     private readonly ObservableCollection<AlertVideo> _catalogInternal = new();
     private readonly ObservableCollection<AlertRequest> _requestsInternal = new();
+    private readonly ObservableCollection<FriendInfo> _friendsInternal = new();
     private List<AlertVideo> _allVideos = new();
     private string _searchText = string.Empty;
     private AlertVideo? _selectedVideo;
+    private FriendInfo? _selectedFriend;
     private bool _isBusy;
     private string _customMessage = string.Empty;
     private decimal _tipAmount = 1;
@@ -31,8 +33,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private int _serverPort = 5050;
     private bool _isConnected;
     private string _connectionStatus = "Нет подключения";
+    private string? _selectedFriendUserId;
 
-    public string? UserEmail => _peerMessenger.UserEmail;
+    public string? UserLogin => _peerMessenger.UserLogin;
+    
+    public string? SelectedFriendUserId
+    {
+        get => _selectedFriendUserId;
+        set => SetProperty(ref _selectedFriendUserId, value);
+    }
+
+    public FriendInfo? SelectedFriend
+    {
+        get => _selectedFriend;
+        set
+        {
+            if (SetProperty(ref _selectedFriend, value))
+            {
+                SelectedFriendUserId = value?.UserId;
+                SubmitRequestCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
 
     public MainViewModel(IMemAlertService service, AlertOverlayManager overlayManager, PeerMessenger peerMessenger)
     {
@@ -40,26 +62,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _overlayManager = overlayManager;
         _peerMessenger = peerMessenger;
         _peerMessenger.RequestReceived += OnPeerRequestReceived;
+        _peerMessenger.MessageReceived += OnPeerMessageReceived;
         _peerMessenger.ConnectionChanged += OnConnectionChanged;
 
         Catalog = new ReadOnlyObservableCollection<AlertVideo>(_catalogInternal);
         ActiveRequests = new ReadOnlyObservableCollection<AlertRequest>(_requestsInternal);
+        Friends = new ReadOnlyObservableCollection<FriendInfo>(_friendsInternal);
 
         RefreshCatalogCommand = new AsyncRelayCommand(LoadCatalogAsync, () => !IsBusy);
         SubmitRequestCommand = new AsyncRelayCommand(SubmitRequestAsync, CanSubmit);
         RefreshRequestsCommand = new AsyncRelayCommand(LoadRequestsAsync, () => !IsBusy);
         EstablishConnectionCommand = new AsyncRelayCommand(EstablishConnectionAsync, () => !IsConnected);
         DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, () => IsConnected);
+        OpenFriendsWindowCommand = new AsyncRelayCommand(OpenFriendsWindowAsync, () => _peerMessenger.IsAuthenticated);
     }
 
     public ReadOnlyObservableCollection<AlertVideo> Catalog { get; }
     public ReadOnlyObservableCollection<AlertRequest> ActiveRequests { get; }
+    public ReadOnlyObservableCollection<FriendInfo> Friends { get; }
 
     public AsyncRelayCommand RefreshCatalogCommand { get; }
     public AsyncRelayCommand SubmitRequestCommand { get; }
     public AsyncRelayCommand RefreshRequestsCommand { get; }
     public AsyncRelayCommand EstablishConnectionCommand { get; }
     public AsyncRelayCommand DisconnectCommand { get; }
+    public AsyncRelayCommand OpenFriendsWindowCommand { get; }
 
     public string SearchText
     {
@@ -201,8 +228,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (_peerMessenger.IsConnected && _peerMessenger.IsAuthenticated)
             {
                 IsConnected = true;
-                ConnectionStatus = $"Подключено как {_peerMessenger.UserEmail}";
-                RaisePropertyChanged(nameof(UserEmail));
+                ConnectionStatus = $"Подключено как {_peerMessenger.UserLogin ?? _peerMessenger.UserEmail}";
+                RaisePropertyChanged(nameof(UserLogin));
+                await _peerMessenger.SendMessageAsync(new GetFriendsRequest());
             }
         }
         catch (Exception ex)
@@ -291,6 +319,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
+        if (SelectedFriend is null)
+        {
+            StatusMessage = "Выберите получателя";
+            return;
+        }
+
         IsBusy = true;
         StatusMessage = "Отправляем запрос...";
 
@@ -302,13 +336,26 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 CustomMessage,
                 TipAmount);
 
-            _requestsInternal.Insert(0, request);
+            // Создаем запрос с RecipientUserId (теперь обязательно)
+            var requestToSend = new AlertRequest
+            {
+                Id = request.Id,
+                Video = request.Video,
+                ViewerName = request.ViewerName,
+                Message = request.Message,
+                TipAmount = request.TipAmount,
+                SubmittedAt = request.SubmittedAt,
+                Status = request.Status,
+                RecipientUserId = SelectedFriendUserId
+            };
+
+            _requestsInternal.Insert(0, requestToSend);
             StatusMessage = "Запрос доставлен ✉️";
             CustomMessage = string.Empty;
 
             if (IsConnected)
             {
-                await _peerMessenger.SendRequestAsync(request);
+                await _peerMessenger.SendRequestAsync(requestToSend);
             }
         }
         catch (Exception ex)
@@ -326,6 +373,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         IsConnected &&
         _peerMessenger.IsAuthenticated &&
         SelectedVideo is not null &&
+        SelectedFriend is not null &&
         !string.IsNullOrWhiteSpace(ViewerName);
 
     private void InsertOrUpdateCatalog(AlertVideo video)
@@ -389,7 +437,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             if (_peerMessenger.IsAuthenticated)
             {
-                ConnectionStatus = $"Подключено как {_peerMessenger.UserEmail}";
+                ConnectionStatus = $"Подключено как {_peerMessenger.UserLogin ?? _peerMessenger.UserEmail}";
                 IsConnected = true;
             }
             else
@@ -421,14 +469,46 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         });
     }
 
+    private void OnPeerMessageReceived(object? sender, MessageBase message)
+    {
+        switch (message)
+        {
+            case GetFriendsResponse response:
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    _friendsInternal.Clear();
+                    foreach (var friend in response.Friends)
+                    {
+                        _friendsInternal.Add(friend);
+                    }
+                    
+                    // Восстанавливаем выбор, если возможно
+                    if (SelectedFriendUserId != null)
+                    {
+                        SelectedFriend = _friendsInternal.FirstOrDefault(f => f.UserId == SelectedFriendUserId);
+                    }
+                });
+                break;
+        }
+    }
+
     private void OnConnectionChanged(object? sender, bool connected)
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        Application.Current.Dispatcher.Invoke(async () =>
         {
             IsConnected = connected && _peerMessenger.IsAuthenticated;
             if (connected && _peerMessenger.IsAuthenticated)
             {
-                ConnectionStatus = $"Подключено как {_peerMessenger.UserEmail}";
+                ConnectionStatus = $"Подключено как {_peerMessenger.UserLogin ?? _peerMessenger.UserEmail}";
+                // Загружаем друзей при подключении
+                try 
+                {
+                    await _peerMessenger.SendMessageAsync(new GetFriendsRequest());
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Ошибка загрузки друзей: {ex.Message}");
+                }
             }
             else if (connected)
             {
@@ -439,6 +519,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 ConnectionStatus = "Нет соединения с сервером";
             }
         });
+    }
+
+    private Task OpenFriendsWindowAsync()
+    {
+        if (Application.Current?.MainWindow is MainWindow mainWindow)
+        {
+            mainWindow.OpenFriendsWindow();
+        }
+        return Task.CompletedTask;
     }
 
     public void Dispose()

@@ -4,7 +4,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using Microsoft.Win32;
+using Microsoft.Extensions.DependencyInjection;
 using MemAlerts.Client.ViewModels;
+using MemAlerts.Client.Views;
 using MaterialDesignThemes.Wpf;
 
 namespace MemAlerts.Client;
@@ -199,5 +201,19 @@ public partial class MainWindow : Window
     private void CloseButton_Click(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    public void OpenFriendsWindow()
+    {
+        var app = Application.Current as App;
+        if (app?._host == null) return;
+
+        var serviceProvider = app._host.Services;
+        var friendViewModel = serviceProvider.GetRequiredService<FriendViewModel>();
+        var friendsWindow = new FriendsWindow(friendViewModel)
+        {
+            Owner = this
+        };
+        friendsWindow.Show();
     }
 }

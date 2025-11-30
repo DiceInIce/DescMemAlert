@@ -22,6 +22,7 @@ public sealed class ClientConnection : IDisposable
     public bool IsConnected { get; private set; } = true;
     public bool IsAuthenticated { get; private set; }
     public string? UserId { get; private set; }
+    public string? UserLogin { get; private set; }
     public string? UserEmail { get; private set; }
 
     public event EventHandler<AlertRequest>? RequestReceived;
@@ -86,10 +87,11 @@ public sealed class ClientConnection : IDisposable
         await SendMessageAsync(message, cancellationToken);
     }
 
-    public void SetAuthenticated(string userId, string userEmail)
+    public void SetAuthenticated(string userId, string userLogin, string userEmail)
     {
         IsAuthenticated = true;
         UserId = userId;
+        UserLogin = userLogin;
         UserEmail = userEmail;
     }
 

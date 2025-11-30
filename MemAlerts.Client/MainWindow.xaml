@@ -7,8 +7,8 @@
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         mc:Ignorable="d"
         Title="MemAlerts Client"
-        Height="800"
-        MinHeight="800"
+        Height="900"
+        MinHeight="900"
         Width="1280"
         MinWidth="1280"
         Background="{DynamicResource MaterialDesignPaper}"
@@ -45,6 +45,16 @@
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                    <!-- Friends Button -->
+                    <Button Style="{StaticResource MaterialDesignIconForegroundButton}"
+                            Command="{Binding OpenFriendsWindowCommand}"
+                            ToolTip="Друзья"
+                            Foreground="White"
+                            Width="32" Height="32"
+                            Margin="0,0,8,0">
+                        <materialDesign:PackIcon Kind="AccountMultiple" Width="20" Height="20" />
+                    </Button>
+                    
                     <!-- Connection Status -->
                     <Border Background="#20FFFFFF" CornerRadius="12" Padding="12,6" Margin="0,0,8,0" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
@@ -261,6 +271,22 @@
                                         Height="60"
                                         FontSize="18"
                                         Margin="0,0,0,24" />
+                                
+                                <ComboBox Style="{StaticResource MaterialDesignOutlinedComboBox}"
+                                          ItemsSource="{Binding Friends}"
+                                          SelectedItem="{Binding SelectedFriend}"
+                                          materialDesign:HintAssist.Hint="Кому отправить"
+                                          DisplayMemberPath="Login"
+                                          Margin="0,0,0,16"
+                                          Height="50"
+                                          FontSize="14">
+                                    <ComboBox.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <VirtualizingStackPanel />
+                                        </ItemsPanelTemplate>
+                                    </ComboBox.ItemsPanel>
+                                </ComboBox>
+
                                 <Button Style="{StaticResource MaterialDesignRaisedButton}"
                                         Command="{Binding SubmitRequestCommand}"
                                         ToolTip="Отправить алерт в очередь"
@@ -293,7 +319,7 @@
                                             Foreground="{DynamicResource PrimaryHueMidForegroundBrush}">
                                         <materialDesign:PackIcon Kind="Refresh" Width="16" Height="16" />
                                     </Button>
-                                    <TextBlock Text="Очередь запросов" FontWeight="Bold" VerticalAlignment="Center" Foreground="{DynamicResource PrimaryHueMidForegroundBrush}"/>
+                                    <TextBlock Text="История" FontWeight="Bold" VerticalAlignment="Center" Foreground="{DynamicResource PrimaryHueMidForegroundBrush}"/>
                                 </DockPanel>
                             </materialDesign:ColorZone>
 

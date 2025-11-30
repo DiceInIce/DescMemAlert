@@ -64,6 +64,7 @@ public partial class LoginWindow : Window
             if (_viewModel != null)
             {
                 _viewModel.LoginSuccessful -= OnLoginSuccessful;
+                _viewModel.Unsubscribe();
             }
         }
         catch (Exception ex)

@@ -11,5 +11,6 @@ public sealed class AlertRequest
     public decimal TipAmount { get; init; }
     public DateTimeOffset SubmittedAt { get; init; } = DateTimeOffset.UtcNow;
     public RequestStatus Status { get; set; } = RequestStatus.Queued;
+    public string? RecipientUserId { get; init; } // Если указан, отправлять только этому пользователю (другу)
 }
 

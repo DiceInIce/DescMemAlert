@@ -14,14 +14,14 @@ public sealed class AuthService : IAuthService
     private readonly Dictionary<string, string> _tokens = new(); // token -> userId
     private readonly object _lock = new();
 
-    public Task<AuthResult> RegisterAsync(string email, string password)
+    public Task<AuthResult> RegisterAsync(string login, string email, string password)
     {
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+        if (string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
         {
             return Task.FromResult(new AuthResult
             {
                 Success = false,
-                ErrorMessage = "Email и пароль обязательны"
+                ErrorMessage = "Логин, email и пароль обязательны"
             });
         }
 
@@ -36,7 +36,18 @@ public sealed class AuthService : IAuthService
 
         lock (_lock)
         {
+            var normalizedLogin = login.Trim();
             var normalizedEmail = email.ToLowerInvariant().Trim();
+            
+            if (_users.Values.Any(u => u.Login.Equals(normalizedLogin, StringComparison.OrdinalIgnoreCase)))
+            {
+                return Task.FromResult(new AuthResult
+                {
+                    Success = false,
+                    ErrorMessage = "Пользователь с таким логином уже существует"
+                });
+            }
+            
             if (_users.Values.Any(u => u.Email.Equals(normalizedEmail, StringComparison.OrdinalIgnoreCase)))
             {
                 return Task.FromResult(new AuthResult
@@ -51,6 +62,7 @@ public sealed class AuthService : IAuthService
             var user = new User
             {
                 Id = userId,
+                Login = normalizedLogin,
                 Email = normalizedEmail,
                 PasswordHash = passwordHash
             };
@@ -64,33 +76,37 @@ public sealed class AuthService : IAuthService
                 Success = true,
                 Token = token,
                 UserId = userId,
-                UserEmail = normalizedEmail
+                UserEmail = normalizedEmail,
+                UserLogin = normalizedLogin
             });
         }
     }
 
-    public Task<AuthResult> LoginAsync(string email, string password)
+    public Task<AuthResult> LoginAsync(string emailOrLogin, string password)
     {
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+        if (string.IsNullOrWhiteSpace(emailOrLogin) || string.IsNullOrWhiteSpace(password))
         {
             return Task.FromResult(new AuthResult
             {
                 Success = false,
-                ErrorMessage = "Email и пароль обязательны"
+                ErrorMessage = "Логин/email и пароль обязательны"
             });
         }
 
         lock (_lock)
         {
-            var normalizedEmail = email.ToLowerInvariant().Trim();
-            var user = _users.Values.FirstOrDefault(u => u.Email.Equals(normalizedEmail, StringComparison.OrdinalIgnoreCase));
+            var normalizedInput = emailOrLogin.Trim();
+            // Ищем по логину или по email
+            var user = _users.Values.FirstOrDefault(u => 
+                u.Login.Equals(normalizedInput, StringComparison.OrdinalIgnoreCase) ||
+                u.Email.Equals(normalizedInput.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase));
 
             if (user is null)
             {
                 return Task.FromResult(new AuthResult
                 {
                     Success = false,
-                    ErrorMessage = "Неверный email или пароль"
+                    ErrorMessage = "Неверный логин/email или пароль"
                 });
             }
 
@@ -100,7 +116,7 @@ public sealed class AuthService : IAuthService
                 return Task.FromResult(new AuthResult
                 {
                     Success = false,
-                    ErrorMessage = "Неверный email или пароль"
+                    ErrorMessage = "Неверный логин/email или пароль"
                 });
             }
 
@@ -112,7 +128,8 @@ public sealed class AuthService : IAuthService
                 Success = true,
                 Token = token,
                 UserId = user.Id,
-                UserEmail = user.Email
+                UserEmail = user.Email,
+                UserLogin = user.Login
             });
         }
     }
@@ -130,6 +147,22 @@ public sealed class AuthService : IAuthService
         lock (_lock)
         {
             return _tokens.TryGetValue(token, out var userId) ? userId : null;
+        }
+    }
+
+    public User? GetUserById(string userId)
+    {
+        lock (_lock)
+        {
+            return _users.TryGetValue(userId, out var user) ? user : null;
+        }
+    }
+
+    public List<User> GetAllUsers()
+    {
+        lock (_lock)
+        {
+            return _users.Values.ToList();
         }
     }
 

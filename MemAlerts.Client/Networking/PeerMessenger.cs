@@ -26,9 +26,11 @@ public sealed class PeerMessenger : IDisposable
     public event EventHandler<AlertRequest>? RequestReceived;
     public event EventHandler<bool>? ConnectionChanged;
     public event EventHandler<AuthResponse>? AuthResponseReceived;
+    public event EventHandler<MessageBase>? MessageReceived;
 
     public bool IsConnected { get; private set; }
     public bool IsAuthenticated { get; private set; }
+    public string? UserLogin { get; private set; }
     public string? UserEmail { get; private set; }
 
     public PeerMessenger()
@@ -80,10 +82,11 @@ public sealed class PeerMessenger : IDisposable
         await SendMessageAsync(request, cancellationToken);
     }
 
-    public async Task RegisterAsync(string email, string password, CancellationToken cancellationToken = default)
+    public async Task RegisterAsync(string login, string email, string password, CancellationToken cancellationToken = default)
     {
         var request = new RegisterRequest
         {
+            Login = login,
             Email = email,
             Password = password
         };
@@ -112,12 +115,14 @@ public sealed class PeerMessenger : IDisposable
         {
             IsAuthenticated = true;
             _authToken = response.Token;
+            UserLogin = response.UserLogin;
             UserEmail = response.UserEmail;
         }
         else
         {
             IsAuthenticated = false;
             _authToken = null;
+            UserLogin = null;
             UserEmail = null;
         }
     }
@@ -142,6 +147,7 @@ public sealed class PeerMessenger : IDisposable
         _cts = null;
         _authToken = null;
         IsAuthenticated = false;
+        UserLogin = null;
         UserEmail = null;
 
         UpdateConnectionState(false);
@@ -196,6 +202,9 @@ public sealed class PeerMessenger : IDisposable
                     
                     if (message is not null)
                     {
+                        // Отправляем общее событие для всех сообщений
+                        MessageReceived?.Invoke(this, message);
+                        
                         switch (message)
                         {
                             case AuthResponse authResponse:

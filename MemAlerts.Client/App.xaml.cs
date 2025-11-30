@@ -17,7 +17,7 @@ namespace MemAlerts.Client;
 /// </summary>
 public partial class App : Application
 {
-    private IHost? _host;
+    internal IHost? _host;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -53,10 +53,12 @@ public partial class App : Application
         // ViewModels
         builder.Services.AddSingleton<MainViewModel>();
         builder.Services.AddTransient<LoginViewModel>();
+        builder.Services.AddTransient<FriendViewModel>();
 
         // Windows
         builder.Services.AddSingleton<MainWindow>();
         builder.Services.AddTransient<LoginWindow>();
+        builder.Services.AddTransient<FriendsWindow>();
 
         _host = builder.Build();
         await _host.StartAsync();

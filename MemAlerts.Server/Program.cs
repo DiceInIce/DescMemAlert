@@ -19,6 +19,7 @@ class Program
     private static TcpListener? _listener;
     private static CancellationTokenSource? _cts;
     private static readonly IAuthService _authService = new FileAuthService();
+    private static readonly IFriendService _friendService = new FileFriendService(_authService);
 
     static async Task Main(string[] args)
     {
@@ -122,6 +123,24 @@ class Program
             case RegisterRequest registerRequest:
                 await HandleRegisterAsync(sender, registerRequest);
                 break;
+            case SearchUsersRequest searchRequest:
+                await HandleSearchUsersAsync(sender, searchRequest);
+                break;
+            case SendFriendRequestMessage friendRequest:
+                await HandleSendFriendRequestAsync(sender, friendRequest);
+                break;
+            case GetFriendsRequest getFriendsRequest:
+                await HandleGetFriendsAsync(sender, getFriendsRequest);
+                break;
+            case AcceptFriendRequestMessage acceptRequest:
+                await HandleAcceptFriendRequestAsync(sender, acceptRequest);
+                break;
+            case RejectFriendRequestMessage rejectRequest:
+                await HandleRejectFriendRequestAsync(sender, rejectRequest);
+                break;
+            case RemoveFriendRequestMessage removeRequest:
+                await HandleRemoveFriendAsync(sender, removeRequest);
+                break;
         }
     }
 
@@ -133,15 +152,16 @@ class Program
             Success = result.Success,
             Token = result.Token,
             ErrorMessage = result.ErrorMessage,
-            UserEmail = result.UserEmail
+            UserEmail = result.UserEmail,
+            UserLogin = result.UserLogin
         };
 
         await connection.SendMessageAsync(response);
 
         if (result.Success && result.UserId is not null)
         {
-            connection.SetAuthenticated(result.UserId, result.UserEmail ?? string.Empty);
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Клиент {connection.Id} авторизован как {result.UserEmail}");
+            connection.SetAuthenticated(result.UserId, result.UserLogin ?? result.UserEmail ?? string.Empty, result.UserEmail ?? string.Empty);
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Клиент {connection.Id} авторизован как {result.UserLogin ?? result.UserEmail}");
         }
         else
         {
@@ -151,21 +171,22 @@ class Program
 
     private static async Task HandleRegisterAsync(ClientConnection connection, RegisterRequest request)
     {
-        var result = await _authService.RegisterAsync(request.Email, request.Password);
+        var result = await _authService.RegisterAsync(request.Login, request.Email, request.Password);
         var response = new AuthResponse
         {
             Success = result.Success,
             Token = result.Token,
             ErrorMessage = result.ErrorMessage,
-            UserEmail = result.UserEmail
+            UserEmail = result.UserEmail,
+            UserLogin = result.UserLogin
         };
 
         await connection.SendMessageAsync(response);
 
         if (result.Success && result.UserId is not null)
         {
-            connection.SetAuthenticated(result.UserId, result.UserEmail ?? string.Empty);
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Клиент {connection.Id} зарегистрирован как {result.UserEmail}");
+            connection.SetAuthenticated(result.UserId, result.UserLogin ?? string.Empty, result.UserEmail ?? string.Empty);
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Клиент {connection.Id} зарегистрирован как {result.UserLogin} ({result.UserEmail})");
         }
         else
         {
@@ -173,20 +194,212 @@ class Program
         }
     }
 
-    private static void OnRequestReceived(ClientConnection? sender, AlertRequest request)
+    private static bool IsAuthorized(ClientConnection connection, out string? userId)
     {
-        if (sender is null)
+        userId = connection.IsAuthenticated ? connection.UserId : null;
+        return userId != null;
+    }
+
+    private static async Task HandleSearchUsersAsync(ClientConnection connection, SearchUsersRequest request)
+    {
+        if (!IsAuthorized(connection, out var userId))
+        {
+            await connection.SendMessageAsync(new SearchUsersResponse
+            {
+                Success = false,
+                ErrorMessage = "Требуется авторизация",
+                Users = new List<UserInfo>()
+            });
+            return;
+        }
+
+        var results = await _friendService.SearchUsersAsync(request.Query, userId!);
+        var users = results.Select(r => new UserInfo
+        {
+            UserId = r.UserId,
+            Login = r.Login,
+            Email = r.Email
+        }).ToList();
+
+        await connection.SendMessageAsync(new SearchUsersResponse
+        {
+            Success = true,
+            Users = users
+        });
+    }
+
+    private static async Task HandleSendFriendRequestAsync(ClientConnection connection, SendFriendRequestMessage request)
+    {
+        if (!IsAuthorized(connection, out var userId))
+        {
+            await connection.SendMessageAsync(new FriendRequestResponse
+            {
+                Success = false,
+                ErrorMessage = "Требуется авторизация"
+            });
+            return;
+        }
+
+        var result = await _friendService.SendFriendRequestAsync(userId!, request.FriendUserId);
+        
+        await connection.SendMessageAsync(new FriendRequestResponse
+        {
+            Success = result.Success,
+            ErrorMessage = result.ErrorMessage
+        });
+
+        if (result.Success && result.FriendInfo != null)
+        {
+            // Отправляем уведомление получателю, если он онлайн
+            var targetConnection = GetConnectionByUserId(request.FriendUserId);
+            if (targetConnection != null)
+            {
+                await targetConnection.SendMessageAsync(new IncomingFriendRequestNotification
+                {
+                    FriendRequest = new FriendInfo
+                    {
+                        FriendshipId = result.FriendInfo.FriendshipId,
+                        UserId = connection.UserId ?? "",
+                        Login = connection.UserLogin ?? "",
+                        Email = connection.UserEmail ?? "",
+                        Status = result.FriendInfo.Status,
+                        IsIncomingRequest = true
+                    }
+                });
+            }
+        }
+    }
+
+    private static async Task HandleGetFriendsAsync(ClientConnection connection, GetFriendsRequest request)
+    {
+        if (!IsAuthorized(connection, out var userId))
+        {
+            await connection.SendMessageAsync(new GetFriendsResponse
+            {
+                Success = false,
+                ErrorMessage = "Требуется авторизация",
+                Friends = new List<FriendInfo>(),
+                PendingRequests = new List<FriendInfo>()
+            });
+            return;
+        }
+
+        var friends = await _friendService.GetFriendsAsync(userId!);
+        var pendingRequests = await _friendService.GetPendingRequestsAsync(userId!);
+
+        await connection.SendMessageAsync(new GetFriendsResponse
+        {
+            Success = true,
+            Friends = friends,
+            PendingRequests = pendingRequests
+        });
+    }
+
+    private static async Task HandleAcceptFriendRequestAsync(ClientConnection connection, AcceptFriendRequestMessage request)
+    {
+        if (!IsAuthorized(connection, out var userId))
+        {
+            await connection.SendMessageAsync(new FriendRequestResponse
+            {
+                Success = false,
+                ErrorMessage = "Требуется авторизация"
+            });
+            return;
+        }
+
+        var result = await _friendService.AcceptFriendRequestAsync(request.FriendshipId, userId!);
+        
+        await connection.SendMessageAsync(new FriendRequestResponse
+        {
+            Success = result.Success,
+            ErrorMessage = result.ErrorMessage
+        });
+    }
+
+    private static async Task HandleRejectFriendRequestAsync(ClientConnection connection, RejectFriendRequestMessage request)
+    {
+        if (!IsAuthorized(connection, out var userId))
+        {
+            await connection.SendMessageAsync(new FriendRequestResponse
+            {
+                Success = false,
+                ErrorMessage = "Требуется авторизация"
+            });
+            return;
+        }
+
+        var result = await _friendService.RejectFriendRequestAsync(request.FriendshipId, userId!);
+        
+        await connection.SendMessageAsync(new FriendRequestResponse
+        {
+            Success = result.Success,
+            ErrorMessage = result.ErrorMessage
+        });
+    }
+
+    private static async Task HandleRemoveFriendAsync(ClientConnection connection, RemoveFriendRequestMessage request)
+    {
+        if (!IsAuthorized(connection, out var userId))
+        {
+            await connection.SendMessageAsync(new FriendRequestResponse
+            {
+                Success = false,
+                ErrorMessage = "Требуется авторизация"
+            });
+            return;
+        }
+
+        var result = await _friendService.RemoveFriendAsync(request.FriendshipId, userId!);
+        
+        await connection.SendMessageAsync(new FriendRequestResponse
+        {
+            Success = result.Success,
+            ErrorMessage = result.ErrorMessage
+        });
+    }
+
+    private static ClientConnection? GetConnectionByUserId(string userId)
+    {
+        lock (_clientsLock)
+        {
+            return _clients.FirstOrDefault(c => c.IsAuthenticated && c.UserId == userId);
+        }
+    }
+
+    private static async void OnRequestReceived(ClientConnection? sender, AlertRequest request)
+    {
+        if (sender is null || sender.UserId is null)
         {
             return;
         }
 
         Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Получен алерт от {sender.Id}: {request.ViewerName} - {request.Video.Title}");
 
-        // Отправляем алерт всем остальным авторизованным клиентам
         List<ClientConnection> clientsToNotify;
         lock (_clientsLock)
         {
-            clientsToNotify = _clients.Where(c => c != sender && c.IsConnected && c.IsAuthenticated).ToList();
+            if (!string.IsNullOrEmpty(request.RecipientUserId))
+            {
+                // Отправляем только указанному другу (проверяем дружбу)
+                var recipient = _clients.FirstOrDefault(c => c.IsAuthenticated && c.UserId == request.RecipientUserId);
+                if (recipient != null && _friendService.AreFriends(sender.UserId, request.RecipientUserId))
+                {
+                    clientsToNotify = new List<ClientConnection> { recipient };
+                }
+                else
+                {
+                    if (recipient != null)
+                    {
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Попытка отправить алерт не другу. Отправитель: {sender.UserId}, Получатель: {request.RecipientUserId}");
+                    }
+                    clientsToNotify = new List<ClientConnection>();
+                }
+            }
+            else
+            {
+                // Отправляем всем остальным авторизованным клиентам (старое поведение)
+                clientsToNotify = _clients.Where(c => c != sender && c.IsConnected && c.IsAuthenticated).ToList();
+            }
         }
 
         var tasks = clientsToNotify.Select(async client =>

@@ -9,6 +9,7 @@ namespace MemAlerts.Client.ViewModels;
 public sealed class LoginViewModel : ObservableObject
 {
     private readonly PeerMessenger _messenger;
+    private string _login = string.Empty;
     private string _email = string.Empty;
     private string _password = string.Empty;
     private string _errorMessage = string.Empty;
@@ -24,7 +25,7 @@ public sealed class LoginViewModel : ObservableObject
         _messenger.AuthResponseReceived += OnAuthResponseReceived;
 
         LoginCommand = new AsyncRelayCommand(LoginAsync, () => !IsBusy && CanLogin);
-        RegisterCommand = new AsyncRelayCommand(RegisterAsync, () => !IsBusy && CanLogin);
+        RegisterCommand = new AsyncRelayCommand(RegisterAsync, () => !IsBusy && CanRegister);
     }
 
     public void Unsubscribe()
@@ -37,6 +38,20 @@ public sealed class LoginViewModel : ObservableObject
 
     public AsyncRelayCommand LoginCommand { get; }
     public AsyncRelayCommand RegisterCommand { get; }
+
+    public string Login
+    {
+        get => _login;
+        set
+        {
+            if (SetProperty(ref _login, value))
+            {
+                LoginCommand.RaiseCanExecuteChanged();
+                RegisterCommand.RaiseCanExecuteChanged();
+                ClearError();
+            }
+        }
+    }
 
     public string Email
     {
@@ -104,7 +119,9 @@ public sealed class LoginViewModel : ObservableObject
         private set => SetProperty(ref _statusMessage, value);
     }
 
-    private bool CanLogin => !string.IsNullOrWhiteSpace(Email) && !string.IsNullOrWhiteSpace(Password) && Password.Length >= 6;
+    private bool CanLogin => !string.IsNullOrWhiteSpace(Login) && !string.IsNullOrWhiteSpace(Password) && Password.Length >= 6;
+    
+    private bool CanRegister => !string.IsNullOrWhiteSpace(Login) && !string.IsNullOrWhiteSpace(Email) && !string.IsNullOrWhiteSpace(Password) && Password.Length >= 6;
 
     private async Task LoginAsync()
     {
@@ -120,7 +137,8 @@ public sealed class LoginViewModel : ObservableObject
 
         try
         {
-            await _messenger.LoginAsync(Email, Password);
+            // Login может быть либо логином, либо email
+            await _messenger.LoginAsync(Login, Password);
         }
         catch (Exception ex)
         {
@@ -147,7 +165,7 @@ public sealed class LoginViewModel : ObservableObject
 
         try
         {
-            await _messenger.RegisterAsync(Email, Password);
+            await _messenger.RegisterAsync(Login, Email, Password);
         }
         catch (Exception ex)
         {
@@ -175,7 +193,7 @@ public sealed class LoginViewModel : ObservableObject
                 {
                     if (response.Success)
                     {
-                        StatusMessage = $"Успешно! Добро пожаловать, {response.UserEmail}";
+                        StatusMessage = $"Успешно! Добро пожаловать, {response.UserLogin ?? response.UserEmail}";
                         LoginSuccessful?.Invoke(this, EventArgs.Empty);
                     }
                     else
