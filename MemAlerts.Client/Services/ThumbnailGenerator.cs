@@ -9,11 +9,17 @@ namespace MemAlerts.Client.Services;
 
 public static class ThumbnailGenerator
 {
-    public static async Task<Uri> GenerateThumbnailAsync(string videoPath)
+    public class ThumbnailResult
+    {
+        public Uri Thumbnail { get; set; }
+        public TimeSpan Duration { get; set; }
+    }
+
+    public static async Task<ThumbnailResult> GenerateThumbnailAsync(string videoPath)
     {
         try
         {
-            var tcs = new TaskCompletionSource<Uri>();
+            var tcs = new TaskCompletionSource<ThumbnailResult>();
 
             await Application.Current.Dispatcher.InvokeAsync(async () =>
             {
@@ -29,11 +35,10 @@ public static class ThumbnailGenerator
                     player.Pause();
                     player.Position = TimeSpan.FromSeconds(1);
 
-                    // Даем немного времени на буферизацию и поиск кадра
-                    // MediaPlayer в WPF не имеет удобного события SeekCompleted, поэтому используем задержку
                     await Task.Delay(800);
 
-                    // Рендерим кадр
+                    var duration = player.NaturalDuration.HasTimeSpan ? player.NaturalDuration.TimeSpan : TimeSpan.Zero;
+
                     var width = 320;
                     var height = 180;
                     
@@ -53,7 +58,6 @@ public static class ThumbnailGenerator
                     var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
                     bitmap.Render(drawingVisual);
 
-                    // Кодируем в JPEG
                     var encoder = new JpegBitmapEncoder();
                     encoder.Frames.Add(BitmapFrame.Create(bitmap));
 
@@ -65,7 +69,7 @@ public static class ThumbnailGenerator
                     }
 
                     player.Close();
-                    tcs.SetResult(new Uri(tempPath));
+                    tcs.SetResult(new ThumbnailResult { Thumbnail = new Uri(tempPath), Duration = duration });
                 }
                 catch (Exception ex)
                 {
@@ -77,8 +81,11 @@ public static class ThumbnailGenerator
         }
         catch
         {
-            // В случае ошибки возвращаем заглушку
-            return new Uri("https://dummyimage.com/320x180/333/fff.png&text=No+Preview");
+            return new ThumbnailResult 
+            { 
+                Thumbnail = new Uri("https://dummyimage.com/320x180/333/fff.png&text=No+Preview"),
+                Duration = TimeSpan.Zero
+            };
         }
     }
 }

@@ -17,7 +17,6 @@ public sealed class MockMemAlertService : IMemAlertService
     public MockMemAlertService()
     {
         SeedCatalog();
-        SeedRequests();
     }
 
     public async Task<IReadOnlyList<AlertVideo>> GetCatalogAsync(CancellationToken cancellationToken = default)
@@ -128,33 +127,6 @@ public sealed class MockMemAlertService : IMemAlertService
                 Price = 8,
                 Source = new Uri("https://samplelib.com/lib/preview/mp4/sample-12s.mp4"),
                 Thumbnail = new Uri("https://i.ytimg.com/vi/OP387525/mqdefault.jpg")
-            }
-        });
-    }
-
-    private void SeedRequests()
-    {
-        _requests.AddRange(new[]
-        {
-            new AlertRequest
-            {
-                Id = "REQ-1001",
-                Video = _catalog[0],
-                ViewerName = "Badger_777",
-                Message = "Пусть чат проснётся!",
-                TipAmount = 4,
-                SubmittedAt = DateTimeOffset.UtcNow.AddMinutes(-4),
-                Status = RequestStatus.Processing
-            },
-            new AlertRequest
-            {
-                Id = "REQ-1002",
-                Video = _catalog[2],
-                ViewerName = "LoFiQueen",
-                Message = "Поддерживаю хард уровень",
-                TipAmount = 10,
-                SubmittedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
-                Status = RequestStatus.Queued
             }
         });
     }

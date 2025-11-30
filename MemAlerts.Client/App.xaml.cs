@@ -12,9 +12,6 @@ using Microsoft.Extensions.Hosting;
 
 namespace MemAlerts.Client;
 
-/// <summary>
-/// Interaction logic for App.xaml
-/// </summary>
 public partial class App : Application
 {
     internal IHost? _host;
@@ -22,13 +19,9 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-
-        // Prevent shutdown when LoginWindow closes
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
         var builder = Host.CreateApplicationBuilder();
-
-        // Configuration
         builder.Services.AddSingleton<AppConfig>(provider => 
         {
             var config = new AppConfig();
@@ -41,21 +34,20 @@ public partial class App : Application
                     if (loadedConfig != null) config = loadedConfig;
                 }
             }
-            catch { /* Use defaults */ }
+            catch { }
             return config;
         });
 
-        // Services
         builder.Services.AddSingleton<IMemAlertService, MockMemAlertService>();
         builder.Services.AddSingleton<AlertOverlayManager>();
         builder.Services.AddSingleton<PeerMessenger>();
+        builder.Services.AddSingleton<LocalVideoService>();
+        builder.Services.AddSingleton<LocalWebServer>();
+        builder.Services.AddTransient<VideoDownloaderService>();
 
-        // ViewModels
         builder.Services.AddSingleton<MainViewModel>();
         builder.Services.AddTransient<LoginViewModel>();
         builder.Services.AddTransient<FriendViewModel>();
-
-        // Windows
         builder.Services.AddSingleton<MainWindow>();
         builder.Services.AddTransient<LoginWindow>();
         builder.Services.AddTransient<FriendsWindow>();
@@ -66,12 +58,12 @@ public partial class App : Application
         var messenger = _host.Services.GetRequiredService<PeerMessenger>();
         var config = _host.Services.GetRequiredService<AppConfig>();
         var mainViewModel = _host.Services.GetRequiredService<MainViewModel>();
+        var localServer = _host.Services.GetRequiredService<LocalWebServer>();
+        localServer.Start();
 
-        // Initialize ViewModel with config
         mainViewModel.ServerAddress = config.ServerIp;
         mainViewModel.ServerPort = config.ServerPort;
 
-        // Connect
         try
         {
             await messenger.ConnectAsync(config.ServerIp, config.ServerPort);
@@ -84,7 +76,6 @@ public partial class App : Application
             return;
         }
 
-        // Login Flow
         var loginWindow = _host.Services.GetRequiredService<LoginWindow>();
         var dialogResult = loginWindow.ShowDialog();
 
@@ -95,7 +86,6 @@ public partial class App : Application
             return;
         }
 
-        // Main Window
         try
         {
             var mainWindow = _host.Services.GetRequiredService<MainWindow>();

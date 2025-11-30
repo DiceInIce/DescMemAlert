@@ -7,18 +7,20 @@ using Microsoft.Win32;
 using Microsoft.Extensions.DependencyInjection;
 using MemAlerts.Client.ViewModels;
 using MemAlerts.Client.Views;
+using MemAlerts.Client.Services;
 using MaterialDesignThemes.Wpf;
+using global::MemAlerts.Shared.Models;
+using Microsoft.Web.WebView2.Core;
 
 namespace MemAlerts.Client;
 
-/// <summary>
-/// Interaction logic for MainWindow.xaml
-/// </summary>
 public partial class MainWindow : Window
 {
     private bool _isPreviewPaused;
     private bool _isPreviewMuted;
     private double _previousVolume = 70;
+    private bool _isWebVideo;
+    private bool _isWebViewInitialized;
 
     public MainWindow(MainViewModel viewModel)
     {
@@ -50,6 +52,45 @@ public partial class MainWindow : Window
         }
     }
 
+    private void AddUrlVideo_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+
+        var dialog = new AddUrlVideoWindow
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(dialog.VideoUrl))
+        {
+            var url = dialog.VideoUrl;
+            var isTikTok = url.Contains("tiktok.com", StringComparison.OrdinalIgnoreCase);
+            var isYouTubeShorts = VideoUrlHelper.IsYouTubeShorts(url);
+            
+            if (isTikTok || isYouTubeShorts)
+            {
+                var downloader = new VideoDownloaderService();
+                if (!downloader.IsDownloaderAvailable())
+                {
+                    var exePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+                    var exeDir = Path.GetDirectoryName(exePath);
+                    MessageBox.Show($"yt-dlp.exe не найден.\n\nПожалуйста, скачайте yt-dlp.exe с https://github.com/yt-dlp/yt-dlp/releases и поместите его в папку:\n{exeDir}", 
+                        "yt-dlp не найден", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                
+                viewModel.DownloadAndAddVideo(url);
+            }
+            else
+            {
+                viewModel.LoadUrlVideo(url);
+            }
+        }
+    }
+
     private void PreviewPlayer_OnMediaEnded(object sender, RoutedEventArgs e)
     {
         if (sender is MediaElement media)
@@ -61,121 +102,247 @@ public partial class MainWindow : Window
         }
     }
 
-    private void PreviewPlayer_OnMediaOpened(object sender, RoutedEventArgs e)
+    private async void PreviewPlayer_OnMediaOpened(object sender, RoutedEventArgs e)
     {
-        _isPreviewPaused = false;
+        _isPreviewPaused = true;
         PreviewPlayer.Position = TimeSpan.Zero;
-        PreviewPlayer.Play();
-        PlayPauseIcon.Kind = PackIconKind.Pause;
-        PreviewPoster.Visibility = Visibility.Collapsed;
+        PreviewPlayer.Pause();
+        PlayPauseIcon.Kind = PackIconKind.Play;
+        PreviewPoster.Visibility = Visibility.Visible;
+        PreviewPlayer.Stretch = System.Windows.Media.Stretch.Uniform;
+        PreviewPlayer.Volume = _isPreviewMuted ? 0 : PreviewVolumeSlider.Value / 100.0;
     }
 
-    private void PreviewPlayPause_Click(object sender, RoutedEventArgs e)
+    private async void ListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (PreviewPlayer.Source is null)
+        _isPreviewPaused = false;
+        PlayPauseIcon.Kind = PackIconKind.Pause;
+        PreviewPoster.Visibility = Visibility.Visible;
+
+        if (e.AddedItems.Count > 0 && e.AddedItems[0] is AlertVideo video)
         {
-            return;
+            _isWebVideo = VideoUrlHelper.IsWebVideo(video.Source);
+
+            if (_isWebVideo)
+            {
+                await LoadWebVideoPreview(video);
+            }
+            else
+            {
+                LoadLocalVideoPreview(video);
+            }
         }
+        else
+        {
+            ClearPreview();
+        }
+    }
+
+    private async Task LoadWebVideoPreview(AlertVideo video)
+    {
+        PreviewPlayer.Stop();
+        PreviewPlayer.Visibility = Visibility.Collapsed;
+        PreviewWebView.Visibility = Visibility.Visible;
+        PreviewPoster.Visibility = Visibility.Collapsed;
+
+        try
+        {
+            if (!_isWebViewInitialized)
+            {
+                await InitializeWebView();
+            }
+            
+            var embedUri = VideoUrlHelper.GetEmbedUri(video.Source, autoplay: false);
+            if (PreviewWebView.Source != embedUri)
+            {
+                PreviewWebView.Source = embedUri;
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка инициализации превью: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void LoadLocalVideoPreview(AlertVideo video)
+    {
+        PreviewWebView.Visibility = Visibility.Collapsed;
+        PreviewPlayer.Visibility = Visibility.Visible;
+        PreviewPlayer.Source = video.Source;
+        PreviewPlayer.Pause();
+        PreviewPlayer.Position = TimeSpan.Zero;
+        _isPreviewPaused = true;
+        PlayPauseIcon.Kind = PackIconKind.Play;
+        PreviewPoster.Visibility = Visibility.Visible;
+    }
+
+    private void ClearPreview()
+    {
+        _isWebVideo = false;
+        
+        if (PreviewPlayer != null)
+        {
+            PreviewPlayer.Stop();
+            PreviewPlayer.Source = null;
+            PreviewPlayer.Visibility = Visibility.Visible;
+        }
+
+        if (PreviewWebView != null)
+        {
+            PreviewWebView.Visibility = Visibility.Collapsed;
+            if (PreviewWebView.CoreWebView2 != null)
+            {
+                PreviewWebView.Source = new Uri("about:blank");
+            }
+        }
+
+        if (PreviewPoster != null)
+        {
+            PreviewPoster.Visibility = Visibility.Visible; 
+        }
+    }
+
+    private async Task InitializeWebView()
+    {
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var userDataFolder = Path.Combine(appData, "MemAlerts", "WebView2");
+        var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+        await PreviewWebView.EnsureCoreWebView2Async(env);
+        PreviewWebView.CoreWebView2.Settings.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        _isWebViewInitialized = true;
+    }
+
+    private async void PreviewPlayPause_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isWebVideo)
+        {
+            await ToggleWebVideoPlayback();
+        }
+        else
+        {
+            ToggleLocalVideoPlayback();
+        }
+    }
+
+    private async Task ToggleWebVideoPlayback()
+    {
+        if (PreviewWebView?.CoreWebView2 == null) return;
+
+        if (_isPreviewPaused)
+        {
+            try { await PreviewWebView.CoreWebView2.ExecuteScriptAsync("playVideo();"); } catch { }
+            SetPlayingState();
+        }
+        else
+        {
+            try { await PreviewWebView.CoreWebView2.ExecuteScriptAsync("pauseVideo();"); } catch { }
+            SetPausedState();
+        }
+    }
+
+    private void ToggleLocalVideoPlayback()
+    {
+        if (PreviewPlayer.Source == null) return;
 
         if (_isPreviewPaused)
         {
             PreviewPlayer.Play();
-            PlayPauseIcon.Kind = PackIconKind.Pause;
-            PreviewPoster.Visibility = Visibility.Collapsed;
+            SetPlayingState();
         }
         else
         {
             PreviewPlayer.Pause();
-            PlayPauseIcon.Kind = PackIconKind.Play;
+            SetPausedState();
         }
-
-        _isPreviewPaused = !_isPreviewPaused;
     }
 
-    private void PreviewVolumeSlider_OnValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    private void SetPlayingState()
     {
-        if (PreviewPlayer is null || !IsLoaded)
-        {
-            return;
-        }
-
-        var newValue = e.NewValue;
-        PreviewPlayer.Volume = newValue / 100.0;
-
-        if (newValue > 0)
-        {
-            _previousVolume = newValue;
-            _isPreviewMuted = false;
-        }
-        else
-        {
-            _isPreviewMuted = true;
-        }
-
-        UpdateMuteVisual();
+        PlayPauseIcon.Kind = PackIconKind.Pause;
+        PreviewPoster.Visibility = Visibility.Collapsed;
+        _isPreviewPaused = false;
     }
 
-    private void PreviewMuteButton_Click(object sender, RoutedEventArgs e)
+    private void SetPausedState()
     {
+        PlayPauseIcon.Kind = PackIconKind.Play;
+        _isPreviewPaused = true;
+    }
+
+    private async void PreviewMuteButton_Click(object sender, RoutedEventArgs e)
+    {
+        _isPreviewMuted = !_isPreviewMuted;
+        
         if (_isPreviewMuted)
         {
-            var targetVolume = _previousVolume > 0 ? _previousVolume : 50;
-            PreviewVolumeSlider.Value = targetVolume;
+            _previousVolume = PreviewVolumeSlider.Value;
+            PreviewVolumeSlider.Value = 0;
         }
         else
         {
-            _isPreviewMuted = true;
-            _previousVolume = PreviewVolumeSlider.Value;
-            PreviewVolumeSlider.Value = 0;
+            PreviewVolumeSlider.Value = _previousVolume > 0 ? _previousVolume : 50;
+        }
+        
+        UpdateMuteVisual();
+        await UpdateWebViewVolume();
+    }
+
+    private async void PreviewVolumeSlider_OnValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (PreviewPlayer != null)
+        {
+            PreviewPlayer.Volume = e.NewValue / 100.0;
+            
+            if (e.NewValue > 0 && _isPreviewMuted)
+            {
+                _isPreviewMuted = false;
+                UpdateMuteVisual();
+            }
+            else if (e.NewValue == 0 && !_isPreviewMuted)
+            {
+                _isPreviewMuted = true;
+                UpdateMuteVisual();
+            }
+        }
+
+        await UpdateWebViewVolume();
+    }
+
+    private async Task UpdateWebViewVolume()
+    {
+        if (_isWebVideo && PreviewWebView?.CoreWebView2 != null)
+        {
+            var vol = _isPreviewMuted ? 0 : (int)PreviewVolumeSlider.Value;
+            try
+            {
+                await PreviewWebView.CoreWebView2.ExecuteScriptAsync($"setVolume({vol});");
+            }
+            catch { }
         }
     }
 
     private void UpdateMuteVisual()
     {
-        if (MuteIcon is null)
+        if (MuteIcon != null)
         {
-            return;
-        }
-
-        MuteIcon.Kind = _isPreviewMuted ? PackIconKind.VolumeOff : PackIconKind.VolumeHigh;
-    }
-
-    private void ListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        // Показываем постер при смене видео
-        if (PreviewPoster != null)
-        {
-            PreviewPoster.Visibility = Visibility.Visible;
-            
-            // Сбрасываем состояние плеера
-            _isPreviewPaused = false;
-            if (PreviewPlayer != null)
+            if (_isPreviewMuted || PreviewVolumeSlider.Value == 0)
             {
-                PreviewPlayer.Stop();
-                PreviewPlayer.Close();
+                MuteIcon.Kind = PackIconKind.VolumeMute;
             }
-            
-            if (PlayPauseIcon != null)
+            else if (PreviewVolumeSlider.Value < 50)
             {
-                PlayPauseIcon.Kind = PackIconKind.Play;
+                MuteIcon.Kind = PackIconKind.VolumeMedium;
+            }
+            else
+            {
+                MuteIcon.Kind = PackIconKind.VolumeHigh;
             }
         }
     }
 
     private void ColorZone_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount == 2)
-        {
-            if (WindowState == WindowState.Maximized)
-            {
-                WindowState = WindowState.Normal;
-            }
-            else
-            {
-                WindowState = WindowState.Maximized;
-            }
-        }
-        else
+        if (e.ButtonState == MouseButtonState.Pressed)
         {
             DragMove();
         }
@@ -200,20 +367,29 @@ public partial class MainWindow : Window
 
     private void CloseButton_Click(object sender, RoutedEventArgs e)
     {
-        Close();
+        Application.Current.Shutdown();
     }
 
     public void OpenFriendsWindow()
     {
-        var app = Application.Current as App;
-        if (app?._host == null) return;
-
-        var serviceProvider = app._host.Services;
-        var friendViewModel = serviceProvider.GetRequiredService<FriendViewModel>();
-        var friendsWindow = new FriendsWindow(friendViewModel)
+        foreach (Window window in Application.Current.Windows)
         {
-            Owner = this
-        };
-        friendsWindow.Show();
+            if (window is FriendsWindow)
+            {
+                window.Activate();
+                if (window.WindowState == WindowState.Minimized)
+                {
+                    window.WindowState = WindowState.Normal;
+                }
+                return;
+            }
+        }
+
+        if (Application.Current is App app && app._host != null)
+        {
+            var friendsWindow = app._host.Services.GetRequiredService<FriendsWindow>();
+            friendsWindow.Owner = this;
+            friendsWindow.Show();
+        }
     }
 }
