@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using MemAlerts.Server.Models;
 using global::MemAlerts.Shared.Models;
+using Microsoft.Extensions.Logging;
 
 namespace MemAlerts.Server.Services;
 
@@ -13,12 +14,14 @@ public sealed class FileFriendService : IFriendService
 {
     private readonly string _friendshipsFilePath;
     private readonly IAuthService _authService;
+    private readonly ILogger<FileFriendService> _logger;
     private readonly Dictionary<string, Friendship> _friendships = new();
     private readonly object _lock = new();
 
-    public FileFriendService(IAuthService authService, string? dataDirectory = null)
+    public FileFriendService(IAuthService authService, ILogger<FileFriendService> logger, string? dataDirectory = null)
     {
         _authService = authService;
+        _logger = logger;
         dataDirectory ??= Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data");
         Directory.CreateDirectory(dataDirectory);
         _friendshipsFilePath = Path.Combine(dataDirectory, "friendships.json");
@@ -44,11 +47,11 @@ public sealed class FileFriendService : IFriendService
                     _friendships[friendship.Id] = friendship;
                 }
             }
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Загружено {_friendships.Count} дружеских связей");
+            _logger.LogInformation("Загружено {Count} дружеских связей", _friendships.Count);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Ошибка загрузки друзей: {ex.Message}");
+            _logger.LogError(ex, "Ошибка загрузки друзей");
         }
     }
 
@@ -67,10 +70,15 @@ public sealed class FileFriendService : IFriendService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Ошибка сохранения друзей: {ex.Message}");
+            _logger.LogError(ex, "Ошибка сохранения друзей");
         }
     }
 
+    // ... (Rest of the implementation remains same, only changing the constructor and saving) ...
+    // Wait, I need to keep the other methods as they were. 
+    // I'll use search_replace or just copy them back. 
+    // Since I have the content from read_file, I will paste the whole file with modifications.
+    
     public Task<List<UserSearchResult>> SearchUsersAsync(string query, string currentUserId)
     {
         if (string.IsNullOrWhiteSpace(query))
@@ -85,7 +93,6 @@ public sealed class FileFriendService : IFriendService
         HashSet<string> pendingUsers;
         lock (_lock)
         {
-            // Добавляем только принятых друзей
             friendships = new HashSet<string>();
             foreach (var friendship in _friendships.Values)
             {
@@ -98,7 +105,6 @@ public sealed class FileFriendService : IFriendService
                 }
             }
 
-            // Собираем пользователей с ожидающими запросами
             pendingUsers = new HashSet<string>();
             foreach (var friendship in _friendships.Values)
             {
@@ -142,7 +148,6 @@ public sealed class FileFriendService : IFriendService
                 });
             }
 
-            // Проверяем, есть ли уже дружба
             var existing = _friendships.Values.FirstOrDefault(f =>
                 (f.UserId1 == requesterId && f.UserId2 == targetUserId) ||
                 (f.UserId1 == targetUserId && f.UserId2 == requesterId));
@@ -165,7 +170,6 @@ public sealed class FileFriendService : IFriendService
                         ErrorMessage = "Запрос на дружбу уже отправлен"
                     });
                 }
-                // Если запрос был отклонен, удаляем старую запись для повторной отправки
                 if (existing.Status == FriendshipStatus.Rejected)
                 {
                     _friendships.Remove(existing.Id);
@@ -198,6 +202,8 @@ public sealed class FileFriendService : IFriendService
 
             _friendships[friendshipId] = friendship;
             SaveFriendships();
+
+            _logger.LogInformation("Отправлен запрос в друзья от {Requester} к {Target}", requesterUser.Login, targetUser.Login);
 
             return Task.FromResult(new FriendOperationResult
             {
@@ -297,6 +303,8 @@ public sealed class FileFriendService : IFriendService
             friendship.Status = FriendshipStatus.Accepted;
             SaveFriendships();
 
+            _logger.LogInformation("Принят запрос дружбы {FriendshipId} пользователем {UserId}", friendshipId, userId);
+
             var baseInfo = CreateFriendInfo(friendship, userId);
             var acceptedInfo = new FriendInfo
             {
@@ -341,6 +349,8 @@ public sealed class FileFriendService : IFriendService
             friendship.Status = FriendshipStatus.Rejected;
             SaveFriendships();
 
+             _logger.LogInformation("Отклонен запрос дружбы {FriendshipId} пользователем {UserId}", friendshipId, userId);
+
             return Task.FromResult(new FriendOperationResult { Success = true });
         }
     }
@@ -369,6 +379,8 @@ public sealed class FileFriendService : IFriendService
 
             _friendships.Remove(friendshipId);
             SaveFriendships();
+
+            _logger.LogInformation("Удалена дружба {FriendshipId} пользователем {UserId}", friendshipId, userId);
 
             return Task.FromResult(new FriendOperationResult { Success = true });
         }
@@ -405,4 +417,3 @@ public sealed class FileFriendService : IFriendService
         };
     }
 }
-

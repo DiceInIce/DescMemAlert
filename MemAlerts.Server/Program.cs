@@ -1,454 +1,68 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net;
-using System.Net.Sockets;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-using global::MemAlerts.Shared.Models;
+﻿using MemAlerts.Server.Hubs;
 using MemAlerts.Server.Services;
+using MemAlerts.Shared.Models;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Serilog;
 
-namespace MemAlerts.Server;
+var builder = WebApplication.CreateBuilder(args);
 
-class Program
+// Configure Serilog
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .CreateLogger();
+
+builder.Host.UseSerilog();
+
+// Add services to the container.
+builder.Services.AddSignalR();
+
+// Register existing services
+builder.Services.AddSingleton<IAuthService>(sp => new FileAuthService(
+    sp.GetRequiredService<ILogger<FileAuthService>>(), 
+    null));
+
+builder.Services.AddSingleton<IFriendService>(sp => new FileFriendService(
+    sp.GetRequiredService<IAuthService>(),
+    sp.GetRequiredService<ILogger<FileFriendService>>(),
+    null));
+
+// Configuration for Port
+builder.Configuration.AddJsonFile("config.json", optional: true, reloadOnChange: true);
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline.
+if (!app.Environment.IsDevelopment())
 {
-    private static readonly List<ClientConnection> _clients = new();
-    private static readonly object _clientsLock = new();
-    private static TcpListener? _listener;
-    private static CancellationTokenSource? _cts;
-    private static readonly IAuthService _authService = new FileAuthService();
-    private static readonly IFriendService _friendService = new FileFriendService(_authService);
+    app.UseExceptionHandler("/Error");
+    app.UseHsts();
+}
 
-    static async Task Main(string[] args)
-    {
-        var port = 5050;
-        
-        // Попытка загрузить конфигурацию
-        try 
-        {
-            if (File.Exists("config.json"))
-            {
-                var json = await File.ReadAllTextAsync("config.json");
-                var config = JsonSerializer.Deserialize<AppConfig>(json);
-                if (config != null)
-                {
-                    port = config.ServerPort;
-                    Console.WriteLine($"Загружена конфигурация: порт {port}");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Ошибка чтения config.json: {ex.Message}. Используется порт по умолчанию.");
-        }
+// Retrieve port from config or use default
+var port = app.Configuration.GetValue<int>("ServerPort", 5050);
+if (args.Length > 0 && int.TryParse(args[0], out var customPort))
+{
+    port = customPort;
+}
 
-        if (args.Length > 0 && int.TryParse(args[0], out var customPort))
-        {
-            port = customPort;
-        }
+app.Urls.Add($"http://*:{port}");
 
-        Console.WriteLine($"Запуск сервера MemAlerts на порту {port}...");
-        Console.WriteLine("Нажмите Ctrl+C для остановки");
+app.MapHub<AlertHub>("/alerthub");
 
-        _cts = new CancellationTokenSource();
-        _listener = new TcpListener(IPAddress.Any, port);
-        _listener.Start();
+Log.Information("Starting MemAlerts SignalR Server on port {Port}...", port);
 
-        Console.CancelKeyPress += (_, e) =>
-        {
-            e.Cancel = true;
-            _cts.Cancel();
-        };
-
-        try
-        {
-            await AcceptClientsAsync(_cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            Console.WriteLine("\nОстановка сервера...");
-        }
-        finally
-        {
-            Cleanup();
-        }
-    }
-
-    private static async Task AcceptClientsAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                var client = await _listener!.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
-                var clientId = Guid.NewGuid().ToString("N")[..8];
-                var connection = new ClientConnection(client, clientId);
-
-                connection.MessageReceived += (sender, msg) => OnMessageReceived(sender as ClientConnection, msg);
-                connection.RequestReceived += (sender, request) => OnRequestReceived(sender as ClientConnection, request);
-                connection.Disconnected += (sender, _) => OnClientDisconnected(sender as ClientConnection);
-
-                lock (_clientsLock)
-                {
-                    _clients.Add(connection);
-                }
-
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Клиент {clientId} подключился (ожидает авторизации). Всего клиентов: {_clients.Count}");
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Ошибка при принятии клиента: {ex.Message}");
-            }
-        }
-    }
-
-    private static async void OnMessageReceived(ClientConnection? sender, MessageBase message)
-    {
-        if (sender is null)
-        {
-            return;
-        }
-
-        switch (message)
-        {
-            case LoginRequest loginRequest:
-                await HandleLoginAsync(sender, loginRequest);
-                break;
-            case RegisterRequest registerRequest:
-                await HandleRegisterAsync(sender, registerRequest);
-                break;
-            case SearchUsersRequest searchRequest:
-                await HandleSearchUsersAsync(sender, searchRequest);
-                break;
-            case SendFriendRequestMessage friendRequest:
-                await HandleSendFriendRequestAsync(sender, friendRequest);
-                break;
-            case GetFriendsRequest getFriendsRequest:
-                await HandleGetFriendsAsync(sender, getFriendsRequest);
-                break;
-            case AcceptFriendRequestMessage acceptRequest:
-                await HandleAcceptFriendRequestAsync(sender, acceptRequest);
-                break;
-            case RejectFriendRequestMessage rejectRequest:
-                await HandleRejectFriendRequestAsync(sender, rejectRequest);
-                break;
-            case RemoveFriendRequestMessage removeRequest:
-                await HandleRemoveFriendAsync(sender, removeRequest);
-                break;
-        }
-    }
-
-    private static async Task HandleLoginAsync(ClientConnection connection, LoginRequest request)
-    {
-        var result = await _authService.LoginAsync(request.Email, request.Password);
-        var response = new AuthResponse
-        {
-            Success = result.Success,
-            Token = result.Token,
-            ErrorMessage = result.ErrorMessage,
-            UserEmail = result.UserEmail,
-            UserLogin = result.UserLogin
-        };
-
-        await connection.SendMessageAsync(response);
-
-        if (result.Success && result.UserId is not null)
-        {
-            connection.SetAuthenticated(result.UserId, result.UserLogin ?? result.UserEmail ?? string.Empty, result.UserEmail ?? string.Empty);
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Клиент {connection.Id} авторизован как {result.UserLogin ?? result.UserEmail}");
-        }
-        else
-        {
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Ошибка авторизации клиента {connection.Id}: {result.ErrorMessage}");
-        }
-    }
-
-    private static async Task HandleRegisterAsync(ClientConnection connection, RegisterRequest request)
-    {
-        var result = await _authService.RegisterAsync(request.Login, request.Email, request.Password);
-        var response = new AuthResponse
-        {
-            Success = result.Success,
-            Token = result.Token,
-            ErrorMessage = result.ErrorMessage,
-            UserEmail = result.UserEmail,
-            UserLogin = result.UserLogin
-        };
-
-        await connection.SendMessageAsync(response);
-
-        if (result.Success && result.UserId is not null)
-        {
-            connection.SetAuthenticated(result.UserId, result.UserLogin ?? string.Empty, result.UserEmail ?? string.Empty);
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Клиент {connection.Id} зарегистрирован как {result.UserLogin} ({result.UserEmail})");
-        }
-        else
-        {
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Ошибка регистрации клиента {connection.Id}: {result.ErrorMessage}");
-        }
-    }
-
-    private static bool IsAuthorized(ClientConnection connection, out string? userId)
-    {
-        userId = connection.IsAuthenticated ? connection.UserId : null;
-        return userId != null;
-    }
-
-    private static async Task HandleSearchUsersAsync(ClientConnection connection, SearchUsersRequest request)
-    {
-        if (!IsAuthorized(connection, out var userId))
-        {
-            await connection.SendMessageAsync(new SearchUsersResponse
-            {
-                Success = false,
-                ErrorMessage = "Требуется авторизация",
-                Users = new List<UserInfo>()
-            });
-            return;
-        }
-
-        var results = await _friendService.SearchUsersAsync(request.Query, userId!);
-        var users = results.Select(r => new UserInfo
-        {
-            UserId = r.UserId,
-            Login = r.Login,
-            Email = r.Email
-        }).ToList();
-
-        await connection.SendMessageAsync(new SearchUsersResponse
-        {
-            Success = true,
-            Users = users
-        });
-    }
-
-    private static async Task HandleSendFriendRequestAsync(ClientConnection connection, SendFriendRequestMessage request)
-    {
-        if (!IsAuthorized(connection, out var userId))
-        {
-            await connection.SendMessageAsync(new FriendRequestResponse
-            {
-                Success = false,
-                ErrorMessage = "Требуется авторизация"
-            });
-            return;
-        }
-
-        var result = await _friendService.SendFriendRequestAsync(userId!, request.FriendUserId);
-        
-        await connection.SendMessageAsync(new FriendRequestResponse
-        {
-            Success = result.Success,
-            ErrorMessage = result.ErrorMessage
-        });
-
-        if (result.Success && result.FriendInfo != null)
-        {
-            // Отправляем уведомление получателю, если он онлайн
-            var targetConnection = GetConnectionByUserId(request.FriendUserId);
-            if (targetConnection != null)
-            {
-                await targetConnection.SendMessageAsync(new IncomingFriendRequestNotification
-                {
-                    FriendRequest = new FriendInfo
-                    {
-                        FriendshipId = result.FriendInfo.FriendshipId,
-                        UserId = connection.UserId ?? "",
-                        Login = connection.UserLogin ?? "",
-                        Email = connection.UserEmail ?? "",
-                        Status = result.FriendInfo.Status,
-                        IsIncomingRequest = true
-                    }
-                });
-            }
-        }
-    }
-
-    private static async Task HandleGetFriendsAsync(ClientConnection connection, GetFriendsRequest request)
-    {
-        if (!IsAuthorized(connection, out var userId))
-        {
-            await connection.SendMessageAsync(new GetFriendsResponse
-            {
-                Success = false,
-                ErrorMessage = "Требуется авторизация",
-                Friends = new List<FriendInfo>(),
-                PendingRequests = new List<FriendInfo>()
-            });
-            return;
-        }
-
-        var friends = await _friendService.GetFriendsAsync(userId!);
-        var pendingRequests = await _friendService.GetPendingRequestsAsync(userId!);
-
-        await connection.SendMessageAsync(new GetFriendsResponse
-        {
-            Success = true,
-            Friends = friends,
-            PendingRequests = pendingRequests
-        });
-    }
-
-    private static async Task HandleAcceptFriendRequestAsync(ClientConnection connection, AcceptFriendRequestMessage request)
-    {
-        if (!IsAuthorized(connection, out var userId))
-        {
-            await connection.SendMessageAsync(new FriendRequestResponse
-            {
-                Success = false,
-                ErrorMessage = "Требуется авторизация"
-            });
-            return;
-        }
-
-        var result = await _friendService.AcceptFriendRequestAsync(request.FriendshipId, userId!);
-        
-        await connection.SendMessageAsync(new FriendRequestResponse
-        {
-            Success = result.Success,
-            ErrorMessage = result.ErrorMessage
-        });
-    }
-
-    private static async Task HandleRejectFriendRequestAsync(ClientConnection connection, RejectFriendRequestMessage request)
-    {
-        if (!IsAuthorized(connection, out var userId))
-        {
-            await connection.SendMessageAsync(new FriendRequestResponse
-            {
-                Success = false,
-                ErrorMessage = "Требуется авторизация"
-            });
-            return;
-        }
-
-        var result = await _friendService.RejectFriendRequestAsync(request.FriendshipId, userId!);
-        
-        await connection.SendMessageAsync(new FriendRequestResponse
-        {
-            Success = result.Success,
-            ErrorMessage = result.ErrorMessage
-        });
-    }
-
-    private static async Task HandleRemoveFriendAsync(ClientConnection connection, RemoveFriendRequestMessage request)
-    {
-        if (!IsAuthorized(connection, out var userId))
-        {
-            await connection.SendMessageAsync(new FriendRequestResponse
-            {
-                Success = false,
-                ErrorMessage = "Требуется авторизация"
-            });
-            return;
-        }
-
-        var result = await _friendService.RemoveFriendAsync(request.FriendshipId, userId!);
-        
-        await connection.SendMessageAsync(new FriendRequestResponse
-        {
-            Success = result.Success,
-            ErrorMessage = result.ErrorMessage
-        });
-    }
-
-    private static ClientConnection? GetConnectionByUserId(string userId)
-    {
-        lock (_clientsLock)
-        {
-            return _clients.FirstOrDefault(c => c.IsAuthenticated && c.UserId == userId);
-        }
-    }
-
-    private static async void OnRequestReceived(ClientConnection? sender, AlertRequest request)
-    {
-        if (sender is null || sender.UserId is null)
-        {
-            return;
-        }
-
-        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Получен алерт от {sender.Id}: {request.ViewerName} - {request.Video.Title}");
-
-        List<ClientConnection> clientsToNotify;
-        lock (_clientsLock)
-        {
-            if (!string.IsNullOrEmpty(request.RecipientUserId))
-            {
-                // Отправляем только указанному другу (проверяем дружбу)
-                var recipient = _clients.FirstOrDefault(c => c.IsAuthenticated && c.UserId == request.RecipientUserId);
-                if (recipient != null && _friendService.AreFriends(sender.UserId, request.RecipientUserId))
-                {
-                    clientsToNotify = new List<ClientConnection> { recipient };
-                }
-                else
-                {
-                    if (recipient != null)
-                    {
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Попытка отправить алерт не другу. Отправитель: {sender.UserId}, Получатель: {request.RecipientUserId}");
-                    }
-                    clientsToNotify = new List<ClientConnection>();
-                }
-            }
-            else
-            {
-                // Отправляем всем остальным авторизованным клиентам (старое поведение)
-                clientsToNotify = _clients.Where(c => c != sender && c.IsConnected && c.IsAuthenticated).ToList();
-            }
-        }
-
-        var tasks = clientsToNotify.Select(async client =>
-        {
-            try
-            {
-                await client.SendRequestAsync(request, _cts?.Token ?? CancellationToken.None);
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Алерт отправлен клиенту {client.Id}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Ошибка отправки клиенту {client.Id}: {ex.Message}");
-            }
-        });
-
-        _ = Task.Run(async () => await Task.WhenAll(tasks));
-    }
-
-    private static void OnClientDisconnected(ClientConnection? client)
-    {
-        if (client is null)
-        {
-            return;
-        }
-
-        lock (_clientsLock)
-        {
-            _clients.Remove(client);
-        }
-
-        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Клиент {client.Id} отключился. Всего клиентов: {_clients.Count}");
-        client.Dispose();
-    }
-
-    private static void Cleanup()
-    {
-        _listener?.Stop();
-
-        lock (_clientsLock)
-        {
-            foreach (var client in _clients)
-            {
-                client.Dispose();
-            }
-
-            _clients.Clear();
-        }
-
-        _cts?.Dispose();
-        Console.WriteLine("Сервер остановлен");
-    }
+try 
+{
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Server terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
 }

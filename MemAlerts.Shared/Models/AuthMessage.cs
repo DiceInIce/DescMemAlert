@@ -40,6 +40,7 @@ public sealed class AuthResponse : MessageBase
     public string? ErrorMessage { get; init; }
     public string? UserEmail { get; init; }
     public string? UserLogin { get; init; }
+    public string? UserId { get; init; }
 }
 
 public sealed class AlertRequestMessage : MessageBase

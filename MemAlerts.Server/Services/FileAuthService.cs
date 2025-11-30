@@ -7,18 +7,21 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using MemAlerts.Server.Models;
+using Microsoft.Extensions.Logging;
 
 namespace MemAlerts.Server.Services;
 
 public sealed class FileAuthService : IAuthService
 {
     private readonly string _usersFilePath;
+    private readonly ILogger<FileAuthService> _logger;
     private readonly Dictionary<string, User> _users = new();
     private readonly Dictionary<string, string> _tokens = new(); // token -> userId
     private readonly object _lock = new();
 
-    public FileAuthService(string? dataDirectory = null)
+    public FileAuthService(ILogger<FileAuthService> logger, string? dataDirectory = null)
     {
+        _logger = logger;
         dataDirectory ??= Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data");
         Directory.CreateDirectory(dataDirectory);
         _usersFilePath = Path.Combine(dataDirectory, "users.json");
@@ -44,11 +47,11 @@ public sealed class FileAuthService : IAuthService
                     _users[user.Id] = user;
                 }
             }
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Загружено {_users.Count} пользователей");
+            _logger.LogInformation("Загружено {Count} пользователей", _users.Count);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Ошибка загрузки: {ex.Message}");
+            _logger.LogError(ex, "Ошибка загрузки пользователей");
         }
     }
 
@@ -67,7 +70,7 @@ public sealed class FileAuthService : IAuthService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Ошибка сохранения пользователей: {ex.Message}");
+            _logger.LogError(ex, "Ошибка сохранения пользователей");
         }
     }
 
@@ -130,7 +133,7 @@ public sealed class FileAuthService : IAuthService
             var token = GenerateToken(userId);
             _tokens[token] = userId;
 
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Зарегистрирован новый пользователь: {normalizedLogin} ({normalizedEmail})");
+            _logger.LogInformation("Зарегистрирован новый пользователь: {Login} ({Email})", normalizedLogin, normalizedEmail);
 
             return Task.FromResult(new AuthResult
             {
@@ -183,6 +186,8 @@ public sealed class FileAuthService : IAuthService
 
             var token = GenerateToken(user.Id);
             _tokens[token] = user.Id;
+
+            _logger.LogDebug("Пользователь {Login} вошел в систему", user.Login);
 
             return Task.FromResult(new AuthResult
             {
@@ -243,4 +248,3 @@ public sealed class FileAuthService : IAuthService
         return Convert.ToBase64String(hash);
     }
 }
-

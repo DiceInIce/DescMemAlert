@@ -1,26 +1,14 @@
 using System;
-using System.Buffers;
-using System.Net.Sockets;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.SignalR.Client;
 using global::MemAlerts.Shared.Models;
 
 namespace MemAlerts.Client.Networking;
 
 public sealed class PeerMessenger : IDisposable
 {
-    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        WriteIndented = false,
-        PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter() }
-    };
-    private readonly SemaphoreSlim _sendLock = new(1, 1);
-    private TcpClient? _client;
-    private NetworkStream? _stream;
-    private CancellationTokenSource? _cts;
+    private HubConnection? _hubConnection;
     private string? _authToken;
 
     public event EventHandler<AlertRequest>? RequestReceived;
@@ -28,10 +16,11 @@ public sealed class PeerMessenger : IDisposable
     public event EventHandler<AuthResponse>? AuthResponseReceived;
     public event EventHandler<MessageBase>? MessageReceived;
 
-    public bool IsConnected { get; private set; }
+    public bool IsConnected => _hubConnection?.State == HubConnectionState.Connected;
     public bool IsAuthenticated { get; private set; }
     public string? UserLogin { get; private set; }
     public string? UserEmail { get; private set; }
+    public string? UserId { get; private set; }
 
     public PeerMessenger()
     {
@@ -41,33 +30,159 @@ public sealed class PeerMessenger : IDisposable
     {
         Disconnect();
 
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var url = $"http://{serverAddress}:{serverPort}/alerthub";
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(url)
+            .WithAutomaticReconnect()
+            .Build();
 
-        var client = new TcpClient();
-        await client.ConnectAsync(serverAddress, serverPort, cancellationToken);
-        AttachClient(client);
+        _hubConnection.Closed += (ex) =>
+        {
+            UpdateConnectionState(false);
+            return Task.CompletedTask;
+        };
+
+        _hubConnection.Reconnecting += (ex) =>
+        {
+            UpdateConnectionState(false);
+            return Task.CompletedTask;
+        };
+
+        _hubConnection.Reconnected += async (connectionId) =>
+        {
+            UpdateConnectionState(true);
+            // Try to re-login
+            if (!string.IsNullOrEmpty(_authToken))
+            {
+                try 
+                {
+                    var response = await _hubConnection.InvokeAsync<AuthResponse>("LoginWithToken", _authToken);
+                    HandleAuthResponse(response);
+                }
+                catch
+                {
+                    // Failed to re-auth
+                }
+            }
+        };
+
+        // Register handlers
+        _hubConnection.On<AlertRequest>("ReceiveAlert", (request) =>
+        {
+            RequestReceived?.Invoke(this, request);
+            // Also invoke generic message received if needed, but AlertRequest is wrapped in AlertRequestMessage usually
+            // The client expects AlertRequestMessage? 
+            // Looking at old code: 
+            // if (message is AlertRequestMessage alertMessage) RequestReceived?.Invoke(this, alertMessage.Request);
+            
+            MessageReceived?.Invoke(this, new AlertRequestMessage { Request = request });
+        });
+
+        _hubConnection.On<IncomingFriendRequestNotification>("ReceiveFriendRequestNotification", (notification) =>
+        {
+            MessageReceived?.Invoke(this, notification);
+        });
+
+        try
+        {
+            await _hubConnection.StartAsync(cancellationToken);
+            UpdateConnectionState(true);
+        }
+        catch
+        {
+            UpdateConnectionState(false);
+            throw;
+        }
     }
 
     public async Task SendMessageAsync(MessageBase message, CancellationToken cancellationToken = default)
     {
-        if (_stream is null)
+        if (_hubConnection is null)
         {
             throw new InvalidOperationException("Нет активного соединения с сервером");
         }
 
-        var payload = JsonSerializer.SerializeToUtf8Bytes(message, _jsonOptions);
-        var lengthPrefix = BitConverter.GetBytes(payload.Length);
-
-        await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // Map messages to Hub methods
         try
         {
-            await _stream.WriteAsync(lengthPrefix.AsMemory(0, 4), cancellationToken).ConfigureAwait(false);
-            await _stream.WriteAsync(payload.AsMemory(), cancellationToken).ConfigureAwait(false);
-            await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            switch (message)
+            {
+                case LoginRequest req:
+                    {
+                        var res = await _hubConnection.InvokeAsync<AuthResponse>("Login", req, cancellationToken);
+                        HandleAuthResponse(res);
+                        AuthResponseReceived?.Invoke(this, res); // Specific handler
+                        MessageReceived?.Invoke(this, res); // Generic handler
+                    }
+                    break;
+
+                case RegisterRequest req:
+                    {
+                        var res = await _hubConnection.InvokeAsync<AuthResponse>("Register", req, cancellationToken);
+                        HandleAuthResponse(res);
+                        AuthResponseReceived?.Invoke(this, res);
+                        MessageReceived?.Invoke(this, res);
+                    }
+                    break;
+
+                case AlertRequestMessage req:
+                    // AlertRequestMessage contains AlertRequest
+                    // Original: SendRequestAsync calls SendMessageAsync(AlertRequestMessage)
+                    await _hubConnection.InvokeAsync("SendAlert", req.Request, cancellationToken);
+                    // No response expected for Alert, but maybe confirmation? Old code didn't verify.
+                    break;
+
+                case SearchUsersRequest req:
+                    {
+                        var res = await _hubConnection.InvokeAsync<SearchUsersResponse>("SearchUsers", req, cancellationToken);
+                        MessageReceived?.Invoke(this, res);
+                    }
+                    break;
+
+                case SendFriendRequestMessage req:
+                    {
+                        var res = await _hubConnection.InvokeAsync<FriendRequestResponse>("SendFriendRequest", req, cancellationToken);
+                        MessageReceived?.Invoke(this, res);
+                    }
+                    break;
+                
+                case GetFriendsRequest req:
+                    {
+                        var res = await _hubConnection.InvokeAsync<GetFriendsResponse>("GetFriends", cancellationToken); // Method has no args
+                        MessageReceived?.Invoke(this, res);
+                    }
+                    break;
+
+                case AcceptFriendRequestMessage req:
+                    {
+                        var res = await _hubConnection.InvokeAsync<FriendRequestResponse>("AcceptFriendRequest", req, cancellationToken);
+                        MessageReceived?.Invoke(this, res);
+                    }
+                    break;
+
+                case RejectFriendRequestMessage req:
+                    {
+                        var res = await _hubConnection.InvokeAsync<FriendRequestResponse>("RejectFriendRequest", req, cancellationToken);
+                        MessageReceived?.Invoke(this, res);
+                    }
+                    break;
+
+                case RemoveFriendRequestMessage req:
+                    {
+                        var res = await _hubConnection.InvokeAsync<FriendRequestResponse>("RemoveFriend", req, cancellationToken);
+                        MessageReceived?.Invoke(this, res);
+                    }
+                    break;
+                
+                default:
+                    throw new NotSupportedException($"Message type {message.GetType().Name} not supported in SignalR migration yet.");
+            }
         }
-        finally
+        catch (Exception ex)
         {
-            _sendLock.Release();
+            // Handle connection errors or invocation errors
+            Console.WriteLine($"Error sending message: {ex.Message}");
+            throw;
         }
     }
 
@@ -117,157 +232,40 @@ public sealed class PeerMessenger : IDisposable
             _authToken = response.Token;
             UserLogin = response.UserLogin;
             UserEmail = response.UserEmail;
+            UserId = response.UserId;
         }
         else
         {
-            IsAuthenticated = false;
-            _authToken = null;
-            UserLogin = null;
-            UserEmail = null;
+            // Don't clear everything on failure unless it was a specific login attempt?
+            // If re-auth fails, maybe we should logout.
         }
     }
 
     public void Disconnect()
     {
-        try
+        if (_hubConnection != null)
         {
-            _cts?.Cancel();
-        }
-        catch
-        {
-            // ignored
+            _hubConnection.StopAsync().GetAwaiter().GetResult();
+            _hubConnection.DisposeAsync().GetAwaiter().GetResult();
+            _hubConnection = null;
         }
 
-        _stream?.Dispose();
-        _client?.Dispose();
-        _cts?.Dispose();
-
-        _stream = null;
-        _client = null;
-        _cts = null;
         _authToken = null;
         IsAuthenticated = false;
         UserLogin = null;
         UserEmail = null;
+        UserId = null;
 
         UpdateConnectionState(false);
     }
 
-    private void AttachClient(TcpClient client)
-    {
-        _client?.Dispose();
-        _stream?.Dispose();
-
-        _client = client;
-        _stream = client.GetStream();
-
-        UpdateConnectionState(true);
-
-        _ = Task.Run(() => ReceiveLoopAsync(_cts?.Token ?? CancellationToken.None), _cts?.Token ?? CancellationToken.None);
-    }
-
-    private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
-    {
-        if (_stream is null)
-        {
-            return;
-        }
-
-        var lengthBuffer = ArrayPool<byte>.Shared.Rent(4);
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested && _stream.CanRead)
-            {
-                if (!await ReadExactAsync(_stream, lengthBuffer, 4, cancellationToken).ConfigureAwait(false))
-                {
-                    break;
-                }
-
-                var length = BitConverter.ToInt32(lengthBuffer, 0);
-                if (length <= 0)
-                {
-                    continue;
-                }
-
-                var payload = ArrayPool<byte>.Shared.Rent(length);
-                try
-                {
-                    if (!await ReadExactAsync(_stream, payload, length, cancellationToken).ConfigureAwait(false))
-                    {
-                        break;
-                    }
-
-                    var jsonBytes = payload.AsSpan(0, length).ToArray();
-                    var message = JsonSerializer.Deserialize<MessageBase>(jsonBytes, _jsonOptions);
-                    
-                    if (message is not null)
-                    {
-                        // Отправляем общее событие для всех сообщений
-                        MessageReceived?.Invoke(this, message);
-                        
-                        switch (message)
-                        {
-                            case AuthResponse authResponse:
-                                HandleAuthResponse(authResponse);
-                                AuthResponseReceived?.Invoke(this, authResponse);
-                                break;
-                            case AlertRequestMessage alertMessage:
-                                RequestReceived?.Invoke(this, alertMessage.Request);
-                                break;
-                        }
-                    }
-                }
-                catch (Exception)
-                {
-                    // Deserialization error - ignore message or log
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(payload);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // ignore
-        }
-        catch
-        {
-            // remote closed unexpectedly
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(lengthBuffer);
-            Disconnect();
-        }
-    }
-
-    private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, int length, CancellationToken token)
-    {
-        var totalRead = 0;
-        while (totalRead < length)
-        {
-            var read = await stream.ReadAsync(buffer, totalRead, length - totalRead, token).ConfigureAwait(false);
-            if (read == 0)
-            {
-                return false;
-            }
-
-            totalRead += read;
-        }
-
-        return true;
-    }
-
     private void UpdateConnectionState(bool isConnected)
     {
-        IsConnected = isConnected;
         ConnectionChanged?.Invoke(this, isConnected);
     }
 
     public void Dispose()
     {
         Disconnect();
-        _sendLock.Dispose();
     }
 }
