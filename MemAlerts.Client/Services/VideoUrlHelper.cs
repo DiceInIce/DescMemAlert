@@ -55,7 +55,7 @@ public static class VideoUrlHelper
     public static bool ShouldForceDownload(string? url)
     {
         if (string.IsNullOrWhiteSpace(url)) return false;
-        return IsYouTubeUrl(url) || IsTikTokUrl(url);
+        return IsYouTubeShorts(url) || IsTikTokUrl(url);
     }
 
     public static Uri GetEmbedUri(Uri sourceUri, bool autoplay = true)

@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
 using global::MemAlerts.Shared.Models;
 
@@ -8,6 +9,7 @@ namespace MemAlerts.Client.Networking;
 
 public sealed class PeerMessenger : IDisposable
 {
+    private const long MaxMessageSizeBytes = 1024L * 1024 * 200; // 200 MB payload support
     private HubConnection? _hubConnection;
     private string? _authToken;
 
@@ -32,9 +34,18 @@ public sealed class PeerMessenger : IDisposable
 
         var url = $"http://{serverAddress}:{serverPort}/alerthub";
         _hubConnection = new HubConnectionBuilder()
-            .WithUrl(url)
+            .AddJsonProtocol()
+            .WithUrl(url, options =>
+            {
+                options.Transports = HttpTransportType.WebSockets | HttpTransportType.LongPolling;
+                options.MaximumReceiveMessageSize = MaxMessageSizeBytes;
+                options.CloseTimeout = TimeSpan.FromMinutes(2);
+            })
             .WithAutomaticReconnect()
             .Build();
+
+        _hubConnection.ServerTimeout = TimeSpan.FromMinutes(2);
+        _hubConnection.KeepAliveInterval = TimeSpan.FromSeconds(15);
 
         _hubConnection.Closed += (ex) =>
         {

@@ -17,7 +17,13 @@ Log.Logger = new LoggerConfiguration()
 builder.Host.UseSerilog();
 
 // Add services to the container.
-builder.Services.AddSignalR();
+const long maxSignalRMessageSize = 1024L * 1024 * 200; // 200 MB to allow inline video payloads
+
+builder.Services.AddSignalR(options =>
+{
+    options.MaximumReceiveMessageSize = maxSignalRMessageSize;
+    options.EnableDetailedErrors = true;
+});
 
 // Register existing services
 builder.Services.AddSingleton<IAuthService>(sp => new FileAuthService(
@@ -50,7 +56,11 @@ if (args.Length > 0 && int.TryParse(args[0], out var customPort))
 
 app.Urls.Add($"http://*:{port}");
 
-app.MapHub<AlertHub>("/alerthub");
+app.MapHub<AlertHub>("/alerthub", options =>
+{
+    options.ApplicationMaxBufferSize = maxSignalRMessageSize;
+    options.TransportMaxBufferSize = maxSignalRMessageSize;
+});
 
 Log.Information("Starting MemAlerts SignalR Server on port {Port}...", port);
 
