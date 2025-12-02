@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+using MemAlerts.Client.Extensions;
 using MemAlerts.Client.Networking;
 using global::MemAlerts.Shared.Models;
 
@@ -29,12 +30,12 @@ public sealed class FriendViewModel : ObservableObject, IDisposable
         PendingRequests = new ReadOnlyObservableCollection<FriendInfo>(_pendingRequestsInternal);
         SearchResults = new ReadOnlyObservableCollection<UserInfo>(_searchResultsInternal);
 
-        RefreshFriendsCommand = new AsyncRelayCommand(LoadFriendsAsync, () => !IsBusy);
-        SearchUsersCommand = new AsyncRelayCommand(SearchUsersAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(SearchQuery));
-        SendFriendRequestCommand = new AsyncRelayCommand<UserInfo>(SendFriendRequestAsync, _ => !IsBusy);
-        AcceptFriendRequestCommand = new AsyncRelayCommand<FriendInfo>(AcceptFriendRequestAsync, _ => !IsBusy);
-        RejectFriendRequestCommand = new AsyncRelayCommand<FriendInfo>(RejectFriendRequestAsync, _ => !IsBusy);
-        RemoveFriendCommand = new AsyncRelayCommand<FriendInfo>(RemoveFriendAsync, _ => !IsBusy);
+        RefreshFriendsCommand = new AsyncRelayCommand(() => LoadFriendsAsync(), () => !IsBusy, () => IsBusy, v => IsBusy = v);
+        SearchUsersCommand = new AsyncRelayCommand(SearchUsersAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(SearchQuery), () => IsBusy, v => IsBusy = v);
+        SendFriendRequestCommand = new AsyncRelayCommand<UserInfo>(SendFriendRequestAsync, _ => !IsBusy, () => IsBusy, v => IsBusy = v);
+        AcceptFriendRequestCommand = new AsyncRelayCommand<FriendInfo>(AcceptFriendRequestAsync, _ => !IsBusy, () => IsBusy, v => IsBusy = v);
+        RejectFriendRequestCommand = new AsyncRelayCommand<FriendInfo>(RejectFriendRequestAsync, _ => !IsBusy, () => IsBusy, v => IsBusy = v);
+        RemoveFriendCommand = new AsyncRelayCommand<FriendInfo>(RemoveFriendAsync, _ => !IsBusy, () => IsBusy, v => IsBusy = v);
     }
 
     public ReadOnlyObservableCollection<FriendInfo> Friends { get; }
@@ -87,155 +88,85 @@ public sealed class FriendViewModel : ObservableObject, IDisposable
         await LoadFriendsAsync();
     }
 
-    private async Task LoadFriendsAsync()
+    private Task LoadFriendsAsync(bool ignoreBusy = false) =>
+        RunSafeAsync(
+            "Загрузка друзей...",
+            () => _messenger.SendMessageAsync(new GetFriendsRequest()),
+            allowWhileBusy: ignoreBusy);
+
+    private Task SearchUsersAsync()
     {
-        if (!_messenger.IsAuthenticated || IsBusy)
+        if (string.IsNullOrWhiteSpace(SearchQuery))
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        IsBusy = true;
-        StatusMessage = "Загрузка друзей...";
-
-        try
-        {
-            await _messenger.SendMessageAsync(new GetFriendsRequest());
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        return RunSafeAsync(
+            "Поиск...",
+            () => _messenger.SendMessageAsync(new SearchUsersRequest { Query = SearchQuery }),
+            errorMessageFactory: ex => $"Ошибка поиска: {ex.Message}");
     }
 
-    private async Task SearchUsersAsync()
+    private Task SendFriendRequestAsync(UserInfo userInfo)
     {
-        if (string.IsNullOrWhiteSpace(SearchQuery) || IsBusy || !_messenger.IsAuthenticated)
-        {
-            return;
-        }
+        ArgumentNullException.ThrowIfNull(userInfo);
 
-        IsBusy = true;
-        StatusMessage = "Поиск...";
-
-        try
-        {
-            await _messenger.SendMessageAsync(new SearchUsersRequest { Query = SearchQuery });
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка поиска: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        return RunSafeAsync(
+            $"Отправка запроса {userInfo.Login}...",
+            () => _messenger.SendMessageAsync(new SendFriendRequestMessage { FriendUserId = userInfo.UserId }));
     }
 
-    private async Task SendFriendRequestAsync(UserInfo userInfo)
+    private Task AcceptFriendRequestAsync(FriendInfo friendInfo)
     {
-        if (!_messenger.IsAuthenticated || IsBusy)
-        {
-            return;
-        }
+        ArgumentNullException.ThrowIfNull(friendInfo);
 
-        IsBusy = true;
-        StatusMessage = $"Отправка запроса {userInfo.Login}...";
-
-        try
-        {
-            await _messenger.SendMessageAsync(new SendFriendRequestMessage { FriendUserId = userInfo.UserId });
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        return RunSafeAsync(
+            $"Принятие запроса от {friendInfo.Login}...",
+            async () =>
+            {
+                await _messenger.SendMessageAsync(new AcceptFriendRequestMessage { FriendshipId = friendInfo.FriendshipId });
+                await LoadFriendsAsync(ignoreBusy: true);
+                StatusMessage = $"Теперь вы друзья с {friendInfo.Login}";
+            });
     }
 
-    private async Task AcceptFriendRequestAsync(FriendInfo friendInfo)
+    private Task RejectFriendRequestAsync(FriendInfo friendInfo)
     {
-        if (!_messenger.IsAuthenticated || IsBusy)
-        {
-            return;
-        }
+        ArgumentNullException.ThrowIfNull(friendInfo);
 
-        IsBusy = true;
-        StatusMessage = $"Принятие запроса от {friendInfo.Login}...";
-
-        try
-        {
-            await _messenger.SendMessageAsync(new AcceptFriendRequestMessage { FriendshipId = friendInfo.FriendshipId });
-            await LoadFriendsAsync();
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        return RunSafeAsync(
+            $"Отклоняем запрос {friendInfo.Login}...",
+            async () =>
+            {
+                await _messenger.SendMessageAsync(new RejectFriendRequestMessage { FriendshipId = friendInfo.FriendshipId });
+                await LoadFriendsAsync(ignoreBusy: true);
+                StatusMessage = $"Запрос {friendInfo.Login} отклонён";
+            });
     }
 
-    private async Task RejectFriendRequestAsync(FriendInfo friendInfo)
+    private Task RemoveFriendAsync(FriendInfo friendInfo)
     {
-        if (!_messenger.IsAuthenticated || IsBusy)
+        ArgumentNullException.ThrowIfNull(friendInfo);
+
+        var confirmation = System.Windows.MessageBox.Show(
+            $"Вы уверены, что хотите удалить {friendInfo.Login} из друзей?",
+            "Подтверждение",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+
+        if (confirmation != System.Windows.MessageBoxResult.Yes)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        IsBusy = true;
-
-        try
-        {
-            await _messenger.SendMessageAsync(new RejectFriendRequestMessage { FriendshipId = friendInfo.FriendshipId });
-            await LoadFriendsAsync();
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private async Task RemoveFriendAsync(FriendInfo friendInfo)
-    {
-        if (!_messenger.IsAuthenticated || IsBusy)
-        {
-            return;
-        }
-
-        var result = System.Windows.MessageBox.Show($"Вы уверены, что хотите удалить {friendInfo.Login} из друзей?", "Подтверждение", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question);
-        if (result != System.Windows.MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        IsBusy = true;
-
-        try
-        {
-            await _messenger.SendMessageAsync(new RemoveFriendRequestMessage { FriendshipId = friendInfo.FriendshipId });
-            await LoadFriendsAsync();
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        return RunSafeAsync(
+            $"Удаляем {friendInfo.Login}...",
+            async () =>
+            {
+                await _messenger.SendMessageAsync(new RemoveFriendRequestMessage { FriendshipId = friendInfo.FriendshipId });
+                await LoadFriendsAsync(ignoreBusy: true);
+                StatusMessage = $"{friendInfo.Login} удалён из друзей";
+            });
     }
 
     private void OnMessageReceived(object? sender, MessageBase message)
@@ -261,17 +192,8 @@ public sealed class FriendViewModel : ObservableObject, IDisposable
     {
         System.Windows.Application.Current.Dispatcher.Invoke(() =>
         {
-            _friendsInternal.Clear();
-            foreach (var friend in response.Friends)
-            {
-                _friendsInternal.Add(friend);
-            }
-
-            _pendingRequestsInternal.Clear();
-            foreach (var request in response.PendingRequests)
-            {
-                _pendingRequestsInternal.Add(request);
-            }
+            _friendsInternal.ReplaceWith(response.Friends);
+            _pendingRequestsInternal.ReplaceWith(response.PendingRequests);
 
             StatusMessage = $"Друзей: {response.Friends.Count}, Запросов: {response.PendingRequests.Count}";
             RaisePropertyChanged(nameof(FriendsCount));
@@ -283,17 +205,14 @@ public sealed class FriendViewModel : ObservableObject, IDisposable
     {
         System.Windows.Application.Current.Dispatcher.Invoke(() =>
         {
-            _searchResultsInternal.Clear();
             if (response.Success)
             {
-                foreach (var user in response.Users)
-                {
-                    _searchResultsInternal.Add(user);
-                }
+                _searchResultsInternal.ReplaceWith(response.Users);
                 StatusMessage = $"Найдено: {response.Users.Count}";
             }
             else
             {
+                _searchResultsInternal.Clear();
                 StatusMessage = response.ErrorMessage ?? "Ошибка поиска";
             }
         });
@@ -306,7 +225,7 @@ public sealed class FriendViewModel : ObservableObject, IDisposable
             if (response.Success)
             {
                 StatusMessage = "Успешно!";
-                _ = LoadFriendsAsync();
+                _ = LoadFriendsAsync(ignoreBusy: true);
             }
             else
             {
@@ -321,9 +240,59 @@ public sealed class FriendViewModel : ObservableObject, IDisposable
         {
             var request = notification.FriendRequest;
             _pendingRequestsInternal.Add(request);
+            _ = LoadFriendsAsync(ignoreBusy: true);
             FriendRequestReceived?.Invoke(this, request);
             StatusMessage = $"Новый запрос от {request.Login}";
         });
+    }
+
+    private Task RunSafeAsync(
+        string? busyMessage,
+        Func<Task> action,
+        bool allowWhileBusy = false,
+        Func<Exception, string>? errorMessageFactory = null)
+    {
+        if (!_messenger.IsAuthenticated)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (IsBusy && !allowWhileBusy)
+        {
+            return Task.CompletedTask;
+        }
+
+        return ExecuteAsync();
+
+        async Task ExecuteAsync()
+        {
+            var shouldToggleBusy = !allowWhileBusy || !IsBusy;
+
+            if (shouldToggleBusy)
+            {
+                IsBusy = true;
+                if (!string.IsNullOrWhiteSpace(busyMessage))
+                {
+                    StatusMessage = busyMessage;
+                }
+            }
+
+            try
+            {
+                await action();
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = errorMessageFactory?.Invoke(ex) ?? $"Ошибка: {ex.Message}";
+            }
+            finally
+            {
+                if (shouldToggleBusy)
+                {
+                    IsBusy = false;
+                }
+            }
+        }
     }
 
     public void Dispose()

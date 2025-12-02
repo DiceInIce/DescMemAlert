@@ -38,11 +38,21 @@
 - **Protocol:** Custom Length-Prefixed JSON over TCP
 
 ## ⚙️ Конфигурация
-IP и Порт сервера можно изменить в файле `config.json`, который лежит рядом с исполняемым файлом (`Client` и `Server`).
+В `MemAlerts.Client/config.json` можно настроить параметры подключения и поведения встроенных веб-плееров:
 ```json
 {
   "ServerIp": "127.0.0.1",
-  "ServerPort": 5050
+  "ServerPort": 5050,
+  "WebViewUserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...",
+  "YoutubeAndroidUserAgent": "Mozilla/5.0 (Linux; Android 11; Pixel 5 ...)",
+  "LocalWebServerPort": 5055
 }
 ```
+
+- `ServerIp`/`ServerPort` — адрес сервера MemAlerts.
+- `WebViewUserAgent` — UA-строка, которую будет использовать WebView2 для предпросмотров и оверлеев.
+- `YoutubeAndroidUserAgent` — UA для `yt-dlp`, чтобы корректно скачивать ролики (по умолчанию Android-клиент YouTube).
+- `LocalWebServerPort` — порт локального HTTP-сервера, через который встраиваются YouTube-видео.
+
+У сервера собственный `config.json` (создаётся автоматически), где можно задать порт прослушивания.
 

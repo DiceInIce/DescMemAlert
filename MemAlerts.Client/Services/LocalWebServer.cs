@@ -2,6 +2,7 @@ using System;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
+using MemAlerts.Shared.Models;
 
 namespace MemAlerts.Client.Services;
 
@@ -9,16 +10,16 @@ public class LocalWebServer : IDisposable
 {
     private readonly HttpListener _listener;
     private readonly string _url;
+    private readonly string _origin;
     private bool _isRunning;
 
     public string BaseUrl => _url;
 
-    public LocalWebServer()
+    public LocalWebServer(AppConfig config)
     {
-        // Bind to loopback on a random available port (or specific range)
-        // Here we try to find a free port or just pick one like 5055
-        var port = 5055; 
-        _url = $"http://localhost:{port}/"; // Using localhost is often more trusted than 127.0.0.1 for origin checks
+        var port = config.LocalWebServerPort > 0 ? config.LocalWebServerPort : 5055;
+        _url = $"http://localhost:{port}/"; // Using localhost is often more trusted for WebView origins
+        _origin = _url.TrimEnd('/');
         _listener = new HttpListener();
         _listener.Prefixes.Add(_url);
     }
@@ -155,7 +156,7 @@ public class LocalWebServer : IDisposable
     <iframe 
         id='player'
         type='text/html'
-        src='https://www.youtube.com/embed/{videoId}?autoplay={autoplayValue}&controls=0&rel=0&modestbranding=1&enablejsapi=1&origin=http://localhost:5055'
+        src='https://www.youtube.com/embed/{videoId}?autoplay={autoplayValue}&controls=0&rel=0&modestbranding=1&enablejsapi=1&origin={_origin}'
         frameborder='0'
         allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share' 
         allowfullscreen>

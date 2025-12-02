@@ -24,8 +24,8 @@ public sealed class LoginViewModel : ObservableObject
         _messenger = messenger;
         _messenger.AuthResponseReceived += OnAuthResponseReceived;
 
-        LoginCommand = new AsyncRelayCommand(LoginAsync, () => !IsBusy && CanLogin);
-        RegisterCommand = new AsyncRelayCommand(RegisterAsync, () => !IsBusy && CanRegister);
+        LoginCommand = new AsyncRelayCommand(LoginAsync, () => !IsBusy && CanLogin, () => IsBusy, v => IsBusy = v);
+        RegisterCommand = new AsyncRelayCommand(RegisterAsync, () => !IsBusy && CanRegister, () => IsBusy, v => IsBusy = v);
     }
 
     public void Unsubscribe()

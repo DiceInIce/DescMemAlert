@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text.Json;
 using System.Windows;
 using global::MemAlerts.Shared.Models;
@@ -42,6 +42,10 @@ public partial class App : Application
         builder.Services.AddSingleton<AlertOverlayManager>();
         builder.Services.AddSingleton<PeerMessenger>();
         builder.Services.AddSingleton<LocalVideoService>();
+        builder.Services.AddSingleton<WebViewEnvironmentProvider>();
+        builder.Services.AddSingleton<WebVideoPlayerService>();
+        builder.Services.AddSingleton<SessionController>();
+        builder.Services.AddSingleton<DialogController>();
         builder.Services.AddSingleton<LocalWebServer>();
         builder.Services.AddTransient<VideoDownloaderService>();
 
@@ -51,6 +55,7 @@ public partial class App : Application
         builder.Services.AddSingleton<MainWindow>();
         builder.Services.AddTransient<LoginWindow>();
         builder.Services.AddTransient<FriendsWindow>();
+        builder.Services.AddTransient<AddUrlVideoWindow>();
 
         _host = builder.Build();
         await _host.StartAsync();

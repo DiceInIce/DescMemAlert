@@ -58,14 +58,15 @@ public static class VideoUrlHelper
         return IsYouTubeShorts(url) || IsTikTokUrl(url);
     }
 
-    public static Uri GetEmbedUri(Uri sourceUri, bool autoplay = true)
+    public static Uri GetEmbedUri(Uri sourceUri, bool autoplay = true, string? localServerBaseUrl = null)
     {
         var url = sourceUri.ToString();
         var videoId = TryGetYoutubeId(url);
 
         if (videoId != null)
         {
-            return new Uri($"http://localhost:5055/embed?v={videoId}&autoplay={(autoplay ? "1" : "0")}");
+            var baseUrl = string.IsNullOrWhiteSpace(localServerBaseUrl) ? "http://localhost:5055" : localServerBaseUrl;
+            return new Uri($"{baseUrl.TrimEnd('/')}/embed?v={videoId}&autoplay={(autoplay ? "1" : "0")}");
         }
 
         return sourceUri;

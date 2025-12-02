@@ -5,78 +5,42 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using MemAlerts.Shared.Models;
 
 namespace MemAlerts.Client.Services;
 
 public class VideoDownloaderService
 {
     private const string YtDlpFileName = "yt-dlp.exe";
-    private const string DesktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-    private const string AndroidUserAgent = "Mozilla/5.0 (Linux; Android 11; Pixel 5 Build/RQ3A.210805.001.A1; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.230 Mobile Safari/537.36";
+    private readonly AppConfig _config;
 
-    public bool IsDownloaderAvailable()
+    public VideoDownloaderService(AppConfig config)
     {
-        // Check in the same directory as the executable
-        var exePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-        var exeDir = Path.GetDirectoryName(exePath);
-        var ytDlpPath = Path.Combine(exeDir ?? AppDomain.CurrentDomain.BaseDirectory, YtDlpFileName);
-        
-        if (File.Exists(ytDlpPath))
-            return true;
-
-        // Also check BaseDirectory (for development scenarios)
-        if (File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, YtDlpFileName)))
-            return true;
-
-        // Check PATH as fallback
-        try
-        {
-            using var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = YtDlpFileName,
-                Arguments = "--version",
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
+        _config = config;
     }
+
+    private string DesktopUserAgent => string.IsNullOrWhiteSpace(_config.WebViewUserAgent)
+        ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        : _config.WebViewUserAgent;
+
+    private string AndroidUserAgent => string.IsNullOrWhiteSpace(_config.YoutubeAndroidUserAgent)
+        ? "Mozilla/5.0 (Linux; Android 11; Pixel 5 Build/RQ3A.210805.001.A1; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.230 Mobile Safari/537.36"
+        : _config.YoutubeAndroidUserAgent;
+
+    public bool IsDownloaderAvailable() => TryResolveDownloaderPath(out _);
 
     public async Task<string> DownloadVideoAsync(string url, string outputDirectory)
     {
-        if (!IsDownloaderAvailable())
-        {
-            var exePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-            var exeDir = Path.GetDirectoryName(exePath);
-            throw new FileNotFoundException($"Не найден {YtDlpFileName}. Пожалуйста, скачайте yt-dlp.exe и поместите его в папку: {exeDir}");
-        }
+        var ytDlpPath = ResolveDownloaderPath();
 
         if (!Directory.Exists(outputDirectory))
         {
             Directory.CreateDirectory(outputDirectory);
         }
 
-        // Find yt-dlp.exe path
-        var exePath2 = System.Reflection.Assembly.GetExecutingAssembly().Location;
-        var exeDir2 = Path.GetDirectoryName(exePath2);
-        var ytDlpPath = Path.Combine(exeDir2 ?? AppDomain.CurrentDomain.BaseDirectory, YtDlpFileName);
-        
-        if (!File.Exists(ytDlpPath))
-        {
-            ytDlpPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, YtDlpFileName);
-            if (!File.Exists(ytDlpPath))
-            {
-                ytDlpPath = YtDlpFileName; // Fallback to PATH
-            }
-        }
-
         // Template for filename: "id.ext"
         var outputTemplate = Path.Combine(outputDirectory, "%(id)s.%(ext)s");
-        
+
         var isYouTube = url.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) || 
                         url.Contains("youtu.be", StringComparison.OrdinalIgnoreCase);
         var userAgent = isYouTube ? AndroidUserAgent : DesktopUserAgent;
@@ -281,6 +245,66 @@ public class VideoDownloaderService
             builder.Append(' ');
         }
         builder.Append(argument);
+    }
+
+    private bool TryResolveDownloaderPath(out string path)
+    {
+        // 1. Executable directory
+        var exePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+        var exeDir = Path.GetDirectoryName(exePath);
+        if (!string.IsNullOrEmpty(exeDir))
+        {
+            var candidate = Path.Combine(exeDir, YtDlpFileName);
+            if (File.Exists(candidate))
+            {
+                path = candidate;
+                return true;
+            }
+        }
+
+        // 2. Base directory (development)
+        var baseDirCandidate = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, YtDlpFileName);
+        if (File.Exists(baseDirCandidate))
+        {
+            path = baseDirCandidate;
+            return true;
+        }
+
+        // 3. PATH
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = YtDlpFileName,
+                Arguments = "--version",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            if (process != null)
+            {
+                path = YtDlpFileName;
+                return true;
+            }
+        }
+        catch
+        {
+            // ignored
+        }
+
+        path = string.Empty;
+        return false;
+    }
+
+    private string ResolveDownloaderPath()
+    {
+        if (TryResolveDownloaderPath(out var path))
+        {
+            return path;
+        }
+
+        var exeDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+        throw new FileNotFoundException($"Не найден {YtDlpFileName}. Пожалуйста, скачайте yt-dlp.exe и поместите его в папку: {exeDir}");
     }
 }
 

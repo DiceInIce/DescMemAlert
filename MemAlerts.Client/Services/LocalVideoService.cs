@@ -54,47 +54,30 @@ public class LocalVideoService
 
     public async Task<AlertVideo> AddLocalVideoAsync(string filePath, string title)
     {
-        if (!IsInitialized) throw new InvalidOperationException("Service not initialized");
+        EnsureInitialized();
 
-        var fileName = Path.GetFileName(filePath);
-        var uniqueName = $"{Guid.NewGuid():N}{Path.GetExtension(fileName)}";
-        var destPath = Path.Combine(_userVideosPath!, uniqueName);
-
-        await Task.Run(() => File.Copy(filePath, destPath, true));
-
-        // Generate thumbnail and get duration
+        var destPath = await CopyToUserVideosAsync(filePath);
         var thumbResult = await ThumbnailGenerator.GenerateThumbnailAsync(destPath);
 
-        var video = new AlertVideo
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Title = title,
-            Description = "Локальное видео",
-            Category = "Local File",
-            Source = new Uri(destPath),
-            Thumbnail = thumbResult.Thumbnail,
-            IsCustom = true,
-            Duration = thumbResult.Duration,
-            OriginalUrl = null,
-            InlineData = null,
-            InlineFileName = Path.GetFileName(filePath)
-        };
+        var video = CreateAlertVideo(
+            title,
+            description: "Локальное видео",
+            category: "Local File",
+            source: new Uri(destPath),
+            thumbnail: thumbResult.Thumbnail,
+            duration: thumbResult.Duration,
+            originalUrl: null,
+            inlineFileName: Path.GetFileName(filePath),
+            isCustom: true);
 
-        _localVideos.Insert(0, video);
-        await SaveMetadataAsync();
-
-        return video;
+        return await PersistVideoAsync(video);
     }
 
     public async Task<AlertVideo> AddDownloadedVideoAsync(string filePath, string originalUrl, string title)
     {
-        if (!IsInitialized) throw new InvalidOperationException("Service not initialized");
+        EnsureInitialized();
 
-        var fileName = Path.GetFileName(filePath);
-        var uniqueName = $"{Guid.NewGuid():N}{Path.GetExtension(fileName)}";
-        var destPath = Path.Combine(_userVideosPath!, uniqueName);
-
-        await Task.Run(() => File.Copy(filePath, destPath, true));
+        var destPath = await CopyToUserVideosAsync(filePath);
         var thumbResult = await ThumbnailGenerator.GenerateThumbnailAsync(destPath);
 
         var category = "Local File";
@@ -129,30 +112,23 @@ public class LocalVideoService
             }
         }
 
-        var video = new AlertVideo
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Title = finalTitle,
-            Description = originalUrl,
-            Category = category,
-            Source = new Uri(destPath),
-            Thumbnail = thumbnail,
-            IsCustom = true,
-            Duration = thumbResult.Duration,
-            OriginalUrl = originalUrl,
-            InlineData = null,
-            InlineFileName = Path.GetFileName(filePath)
-        };
+        var video = CreateAlertVideo(
+            finalTitle,
+            description: originalUrl,
+            category: category,
+            source: new Uri(destPath),
+            thumbnail: thumbnail,
+            duration: thumbResult.Duration,
+            originalUrl: originalUrl,
+            inlineFileName: Path.GetFileName(filePath),
+            isCustom: true);
 
-        _localVideos.Insert(0, video);
-        await SaveMetadataAsync();
-
-        return video;
+        return await PersistVideoAsync(video);
     }
 
     public async Task<AlertVideo> AddUrlVideoAsync(string url, string title)
     {
-        if (!IsInitialized) throw new InvalidOperationException("Service not initialized");
+        EnsureInitialized();
 
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
@@ -200,25 +176,18 @@ public class LocalVideoService
             }
         }
 
-        var video = new AlertVideo
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Title = finalTitle,
-            Description = "Видео из интернета",
-            Category = category,
-            Source = uri,
-            Thumbnail = thumbnail,
-            IsCustom = true,
-            Duration = duration,
-            OriginalUrl = url,
-            InlineData = null,
-            InlineFileName = null
-        };
+        var video = CreateAlertVideo(
+            finalTitle,
+            description: "Видео из интернета",
+            category: category,
+            source: uri,
+            thumbnail: thumbnail,
+            duration: duration,
+            originalUrl: url,
+            inlineFileName: null,
+            isCustom: true);
 
-        _localVideos.Insert(0, video);
-        await SaveMetadataAsync();
-
-        return video;
+        return await PersistVideoAsync(video);
     }
 
     public async Task DeleteVideoAsync(string videoId)
@@ -248,6 +217,55 @@ public class LocalVideoService
         }
 
         _localVideos.Remove(video);
+        await SaveMetadataAsync();
+    }
+
+    public async Task ClearCachedVideosAsync()
+    {
+        if (!IsInitialized) throw new InvalidOperationException("Service not initialized");
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_userVideosPath) && Directory.Exists(_userVideosPath))
+            {
+                await Task.Run(() =>
+                {
+                    foreach (var file in Directory.GetFiles(_userVideosPath!, "*", SearchOption.TopDirectoryOnly))
+                    {
+                        try
+                        {
+                            File.Delete(file);
+                        }
+                        catch { }
+                    }
+
+                    foreach (var dir in Directory.GetDirectories(_userVideosPath!))
+                    {
+                        try
+                        {
+                            Directory.Delete(dir, true);
+                        }
+                        catch { }
+                    }
+                });
+            }
+        }
+        catch
+        {
+            // noop, we still want to clear metadata even if filesystem cleanup partially fails
+        }
+
+        _localVideos.Clear();
+
+        if (!string.IsNullOrWhiteSpace(_userJsonPath) && File.Exists(_userJsonPath))
+        {
+            try
+            {
+                File.Delete(_userJsonPath!);
+            }
+            catch { }
+        }
+
         await SaveMetadataAsync();
     }
 
@@ -294,6 +312,57 @@ public class LocalVideoService
         if (_userJsonPath == null) return;
         using var stream = File.Create(_userJsonPath);
         await JsonSerializer.SerializeAsync(stream, _localVideos);
+    }
+
+    private void EnsureInitialized()
+    {
+        if (!IsInitialized)
+        {
+            throw new InvalidOperationException("Service not initialized");
+        }
+    }
+
+    private async Task<string> CopyToUserVideosAsync(string sourcePath)
+    {
+        var fileName = Path.GetFileName(sourcePath);
+        var uniqueName = $"{Guid.NewGuid():N}{Path.GetExtension(fileName)}";
+        var destPath = Path.Combine(_userVideosPath!, uniqueName);
+        await Task.Run(() => File.Copy(sourcePath, destPath, true));
+        return destPath;
+    }
+
+    private async Task<AlertVideo> PersistVideoAsync(AlertVideo video)
+    {
+        _localVideos.Insert(0, video);
+        await SaveMetadataAsync();
+        return video;
+    }
+
+    private static AlertVideo CreateAlertVideo(
+        string title,
+        string description,
+        string category,
+        Uri source,
+        Uri thumbnail,
+        TimeSpan duration,
+        string? originalUrl,
+        string? inlineFileName,
+        bool isCustom)
+    {
+        return new AlertVideo
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Title = title,
+            Description = description,
+            Category = category,
+            Source = source,
+            Thumbnail = thumbnail,
+            IsCustom = isCustom,
+            Duration = duration,
+            OriginalUrl = originalUrl,
+            InlineData = null,
+            InlineFileName = inlineFileName
+        };
     }
 
     private async Task<(string? title, Uri? thumbnail)> FetchTikTokMetadataAsync(string url)

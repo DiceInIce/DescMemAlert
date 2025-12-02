@@ -1,6 +1,4 @@
 using System;
-using System.IO;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
@@ -13,10 +11,12 @@ namespace MemAlerts.Client.Alerts;
 public partial class AlertOverlayWindow : Window
 {
     private static readonly Random Randomizer = new();
+    private readonly WebVideoPlayerService _webVideoPlayerService;
     private bool _isWebVideo;
 
-    public AlertOverlayWindow(AlertRequest request)
+    public AlertOverlayWindow(AlertRequest request, WebVideoPlayerService webVideoPlayerService)
     {
+        _webVideoPlayerService = webVideoPlayerService;
         InitializeComponent();
         DataContext = request;
         Loaded += (_, _) => InitializeWindow(request);
@@ -45,19 +45,8 @@ public partial class AlertOverlayWindow : Window
             
             try 
             {
-                var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                var userDataFolder = Path.Combine(appData, "MemAlerts", "WebView2");
-                var options = new CoreWebView2EnvironmentOptions("--autoplay-policy=no-user-gesture-required");
-                var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder, options);
-                
-                await OverlayWebView.EnsureCoreWebView2Async(env);
-                OverlayWebView.CoreWebView2.Settings.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-                
-                var embedUri = VideoUrlHelper.GetEmbedUri(request.Video.Source, autoplay: true);
-                if (OverlayWebView.Source != embedUri)
-                {
-                    OverlayWebView.Source = embedUri;
-                }
+                await _webVideoPlayerService.EnsureWebViewInitializedAsync(OverlayWebView);
+                await _webVideoPlayerService.LoadVideoAsync(OverlayWebView, request.Video.Source, autoplay: true);
                 OverlayWebView.NavigationCompleted += OverlayWebView_NavigationCompleted;
             }
             catch (Exception ex)
@@ -218,13 +207,9 @@ public partial class AlertOverlayWindow : Window
             else MuteIcon.Kind = MaterialDesignThemes.Wpf.PackIconKind.VolumeHigh;
         }
 
-        if (_isWebVideo && OverlayWebView != null && OverlayWebView.CoreWebView2 != null)
+        if (_isWebVideo && OverlayWebView?.CoreWebView2 != null)
         {
-            try
-            {
-                await OverlayWebView.CoreWebView2.ExecuteScriptAsync($"setVolume({(int)vol});");
-            }
-            catch { }
+            await _webVideoPlayerService.SetVolumeAsync(OverlayWebView, (int)vol);
         }
         else if (OverlayPlayer != null)
         {

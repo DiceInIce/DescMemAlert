@@ -7,19 +7,21 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using MemAlerts.Client.Alerts;
+using MemAlerts.Client.Extensions;
 using global::MemAlerts.Shared.Models;
 using MemAlerts.Client.Networking;
 using MemAlerts.Client.Services;
+using System.Reflection;
 
 namespace MemAlerts.Client.ViewModels;
 
-public sealed class MainViewModel : ObservableObject, IDisposable
+public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly IMemAlertService _service;
     private readonly PeerMessenger _peerMessenger;
     private readonly AlertOverlayManager _overlayManager;
     private readonly LocalVideoService _localVideoService;
-    private readonly VideoDownloaderService _videoDownloader = new();
+    private readonly VideoDownloaderService _videoDownloader;
     private readonly ConcurrentDictionary<string, Uri> _downloadedVideoCache = new();
     
     private readonly ObservableCollection<AlertVideo> _catalogInternal = new();
@@ -67,12 +69,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         IMemAlertService service, 
         AlertOverlayManager overlayManager, 
         PeerMessenger peerMessenger,
-        LocalVideoService localVideoService)
+        LocalVideoService localVideoService,
+        VideoDownloaderService videoDownloader)
     {
         _service = service;
         _overlayManager = overlayManager;
         _peerMessenger = peerMessenger;
         _localVideoService = localVideoService;
+        _videoDownloader = videoDownloader;
         
         _peerMessenger.RequestReceived += OnPeerRequestReceived;
         _peerMessenger.MessageReceived += OnPeerMessageReceived;
@@ -82,14 +86,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ActiveRequests = new ReadOnlyObservableCollection<HistoryItemViewModel>(_requestsInternal);
         Friends = new ReadOnlyObservableCollection<FriendInfo>(_friendsInternal);
 
-        RefreshCatalogCommand = new AsyncRelayCommand(LoadCatalogAsync, () => !IsBusy);
-        SubmitRequestCommand = new AsyncRelayCommand(SubmitRequestAsync, CanSubmit);
-        RefreshRequestsCommand = new AsyncRelayCommand(LoadRequestsAsync, () => !IsBusy);
+        RefreshCatalogCommand = new AsyncRelayCommand(LoadCatalogAsync, () => !IsBusy, () => IsBusy, v => IsBusy = v);
+        SubmitRequestCommand = new AsyncRelayCommand(SubmitRequestAsync, CanSubmit, () => IsBusy, v => IsBusy = v);
+        RefreshRequestsCommand = new AsyncRelayCommand(LoadRequestsAsync, () => !IsBusy, () => IsBusy, v => IsBusy = v);
         EstablishConnectionCommand = new AsyncRelayCommand(EstablishConnectionAsync, () => !IsConnected);
         DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, () => IsConnected);
         OpenFriendsWindowCommand = new AsyncRelayCommand(OpenFriendsWindowAsync, () => _peerMessenger.IsAuthenticated);
-        DeleteVideoCommand = new AsyncRelayCommand<AlertVideo>(DeleteVideoAsync, CanDeleteVideo);
+        DeleteVideoCommand = new AsyncRelayCommand<AlertVideo>(DeleteVideoAsync, CanDeleteVideo, () => IsBusy, v => IsBusy = v);
         OpenHistoryLinkCommand = new AsyncRelayCommand<HistoryItemViewModel>(OpenHistoryLinkAsync);
+        ClearCacheCommand = new AsyncRelayCommand(ClearCacheAsync, () => !IsBusy, () => IsBusy, v => IsBusy = v);
+
+        ApplicationVersion = $"Версия {Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0"}";
     }
 
     public ReadOnlyObservableCollection<AlertVideo> Catalog { get; }
@@ -104,6 +111,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand OpenFriendsWindowCommand { get; }
     public AsyncRelayCommand<AlertVideo> DeleteVideoCommand { get; }
     public AsyncRelayCommand<HistoryItemViewModel> OpenHistoryLinkCommand { get; }
+    public AsyncRelayCommand ClearCacheCommand { get; }
+
+    public string ApplicationVersion { get; }
 
     public bool IsGlobalLibrary
     {
@@ -187,6 +197,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 RefreshCatalogCommand.RaiseCanExecuteChanged();
                 RefreshRequestsCommand.RaiseCanExecuteChanged();
                 SubmitRequestCommand.RaiseCanExecuteChanged();
+                ClearCacheCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -227,645 +238,45 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _previewSource, value);
     }
 
-    public async void LoadCustomVideo(Uri fileUri, string title)
+    private Task RunBusyOperationAsync(
+        string busyMessage,
+        Func<Task> action,
+        bool allowWhileBusy = false,
+        Func<Exception, string>? errorMessageFactory = null)
     {
-        try
+        if (IsBusy && !allowWhileBusy)
         {
-            var video = await _localVideoService.AddLocalVideoAsync(fileUri.LocalPath, title);
-            AddVideoToCatalog(video);
-            StatusMessage = "Видео добавлено в коллекцию";
+            return Task.CompletedTask;
         }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка добавления видео: {ex.Message}";
-        }
-    }
 
-    public async void LoadUrlVideo(string url)
-    {
-        try
-        {
-            var video = await _localVideoService.AddUrlVideoAsync(url, "Web Video");
-            AddVideoToCatalog(video);
-            StatusMessage = "Ссылка добавлена";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка добавления ссылки: {ex.Message}";
-        }
-    }
+        return ExecuteAsync();
 
-    public async void DownloadAndAddVideo(string url)
-    {
-        try
+        async Task ExecuteAsync()
         {
-            IsBusy = true;
-            StatusMessage = "Загрузка видео... (это может занять время)";
-            
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var userId = UserLogin ?? "default";
-            var videosDir = Path.Combine(appData, "MemAlerts", "Users", userId, "Videos");
-            
-            var filePath = await _videoDownloader.DownloadVideoAsync(url, videosDir);
-            
-            var title = "Downloaded Video";
-            try 
+            var shouldToggleBusy = !allowWhileBusy || !IsBusy;
+
+            if (shouldToggleBusy)
             {
-                title = Path.GetFileNameWithoutExtension(filePath);
-            } 
-            catch {}
-
-            var video = await _localVideoService.AddDownloadedVideoAsync(filePath, url, title);
-            AddVideoToCatalog(video);
-            StatusMessage = "Видео успешно скачано и добавлено";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка загрузки: {ex.Message}";
-            MessageBox.Show($"Не удалось скачать видео: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private void AddVideoToCatalog(AlertVideo video)
-    {
-        if (IsGlobalLibrary)
-        {
-            IsGlobalLibrary = false;
-        }
-        else
-        {
-            InsertOrUpdateCatalog(video);
-        }
-        
-        SelectedVideo = video;
-    }
-
-    public async Task InitializeAsync()
-    {
-        try
-        {
-            if (_peerMessenger.IsConnected && _peerMessenger.IsAuthenticated)
-            {
-                IsConnected = true;
-                ConnectionStatus = $"Подключено как {_peerMessenger.UserLogin ?? _peerMessenger.UserEmail}";
-                RaisePropertyChanged(nameof(UserLogin));
-                
-                var userId = _peerMessenger.UserLogin ?? "default";
-                _localVideoService.Initialize(userId);
-                
-                await _peerMessenger.SendMessageAsync(new GetFriendsRequest());
-            }
-            else
-            {
-                 _localVideoService.Initialize("offline-user");
+                IsBusy = true;
+                StatusMessage = busyMessage;
             }
 
-            await LoadCatalogAsync();
-            await LoadRequestsAsync();
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Ошибка инициализации: {ex.Message}");
-            StatusMessage = "Ошибка загрузки данных";
-        }
-    }
-
-    private async Task LoadCatalogAsync()
-    {
-        if (IsBusy)
-        {
-            return;
-        }
-
-        IsBusy = true;
-        StatusMessage = IsGlobalLibrary ? "Загружаем глобальный каталог..." : "Загружаем ваши видео...";
-
-        try
-        {
-            List<AlertVideo> videos;
-            
-            if (IsGlobalLibrary)
-            {
-                videos = (await _service.GetCatalogAsync())
-                    .OrderByDescending(v => v.IsCommunityFavorite)
-                    .ThenBy(v => v.Title)
-                    .ToList();
-            }
-            else
-            {
-                videos = await _localVideoService.GetVideosAsync();
-                videos = videos.OrderByDescending(v => v.Id).ToList();
-            }
-
-            _allVideos = videos;
-            ApplyFilters();
-
-            if (!_catalogInternal.Any())
-            {
-                StatusMessage = IsGlobalLibrary ? "Глобальный каталог пуст" : "У вас пока нет видео";
-            }
-            else
-            {
-                StatusMessage = $"Загружено {_catalogInternal.Count} видео";
-            }
-
-            SelectedVideo ??= _catalogInternal.FirstOrDefault();
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка каталога: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private async Task LoadRequestsAsync()
-    {
-        if (IsBusy)
-        {
-            return;
-        }
-
-        IsBusy = true;
-        StatusMessage = "Загружаем историю...";
-
-        try
-        {
-            var requests = await _service.GetActiveRequestsAsync();
-            _requestsInternal.Clear();
-            foreach (var request in requests)
-            {
-                bool isIncoming = request.ViewerName != UserLogin;
-                _requestsInternal.Add(new HistoryItemViewModel(request, isIncoming));
-            }
-
-            StatusMessage = "История обновлена";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка истории: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private async Task SubmitRequestAsync()
-    {
-        if (SelectedVideo is null)
-        {
-            StatusMessage = "Выберите клип";
-            return;
-        }
-
-        if (SelectedFriend is null)
-        {
-            StatusMessage = "Выберите получателя";
-            return;
-        }
-
-        IsBusy = true;
-        StatusMessage = "Отправляем запрос...";
-
-        try
-        {
-            var senderName = UserLogin ?? ViewerName;
-            
-            var preparedVideo = await PrepareVideoForSendingAsync(SelectedVideo);
-
-            var request = await _service.SubmitRequestAsync(
-                preparedVideo,
-                senderName,
-                CustomMessage,
-                TipAmount);
-
-            var requestToSend = new AlertRequest
-            {
-                Id = request.Id,
-                Video = request.Video,
-                ViewerName = senderName,
-                Message = request.Message,
-                TipAmount = request.TipAmount,
-                SubmittedAt = request.SubmittedAt,
-                Status = request.Status,
-                RecipientUserId = SelectedFriendUserId
-            };
-
-            _requestsInternal.Insert(0, new HistoryItemViewModel(requestToSend, isIncoming: false));
-            StatusMessage = "Запрос доставлен ✉️";
-            CustomMessage = string.Empty;
-
-            if (IsConnected)
-            {
-                await _peerMessenger.SendRequestAsync(requestToSend);
-            }
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Не удалось отправить: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private bool CanSubmit() =>
-        !IsBusy &&
-        IsConnected &&
-        _peerMessenger.IsAuthenticated &&
-        SelectedVideo is not null &&
-        SelectedFriend is not null &&
-        !string.IsNullOrWhiteSpace(ViewerName);
-
-    private void InsertOrUpdateCatalog(AlertVideo video)
-    {
-        var existingIndex = _allVideos.FindIndex(v => v.Id == video.Id);
-        if (existingIndex >= 0)
-        {
-            _allVideos[existingIndex] = video;
-        }
-        else
-        {
-            _allVideos.Insert(0, video);
-        }
-
-        ApplyFilters();
-    }
-
-    private void ApplyFilters()
-    {
-        var filtered = string.IsNullOrWhiteSpace(SearchText)
-            ? _allVideos
-            : _allVideos.Where(MatchesSearchText).ToList();
-
-        _catalogInternal.Clear();
-        foreach (var video in filtered)
-        {
-            _catalogInternal.Add(video);
-        }
-
-        if (!filtered.Any())
-        {
-            SelectedVideo = null;
-            return;
-        }
-
-        if (SelectedVideo is null || !filtered.Contains(SelectedVideo))
-        {
-            SelectedVideo = filtered.First();
-        }
-    }
-
-    private bool MatchesSearchText(AlertVideo video)
-    {
-        return video.Title.Contains(SearchText, StringComparison.OrdinalIgnoreCase)
-            || video.Description.Contains(SearchText, StringComparison.OrdinalIgnoreCase)
-            || video.Category.Contains(SearchText, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private async Task EstablishConnectionAsync()
-    {
-        if (IsConnected)
-        {
-            return;
-        }
-
-        ConnectionStatus = "Подключаемся к серверу...";
-
-        try
-        {
-            if (!_peerMessenger.IsConnected)
-            {
-                await _peerMessenger.ConnectAsync(ServerAddress, ServerPort);
-            }
-
-            if (_peerMessenger.IsAuthenticated)
-            {
-                await OnAuthenticationSuccess();
-            }
-            else
-            {
-                ConnectionStatus = "Требуется авторизация";
-            }
-        }
-        catch (Exception ex)
-        {
-            ConnectionStatus = $"Ошибка подключения: {ex.Message}";
-        }
-    }
-
-    private async Task OnAuthenticationSuccess()
-    {
-        ConnectionStatus = $"Подключено как {_peerMessenger.UserLogin ?? _peerMessenger.UserEmail}";
-        IsConnected = true;
-        
-        if (!string.IsNullOrWhiteSpace(_peerMessenger.UserLogin))
-        {
-            ViewerName = _peerMessenger.UserLogin;
-        }
-        
-        var userId = _peerMessenger.UserLogin ?? "default";
-        _localVideoService.Initialize(userId);
-        await LoadCatalogAsync();
-    }
-
-    private Task DisconnectAsync()
-    {
-        _peerMessenger.Disconnect();
-        ConnectionStatus = "Соединение разорвано";
-        return Task.CompletedTask;
-    }
-
-    private void OnPeerRequestReceived(object? sender, AlertRequest e)
-    {
-        _ = HandleIncomingAlertAsync(e);
-    }
-
-    private async Task HandleIncomingAlertAsync(AlertRequest request)
-    {
-        try
-        {
-            var preparedVideo = await EnsureVideoReadyForPlaybackAsync(request.Video);
-            var finalRequest = ReferenceEquals(preparedVideo, request.Video)
-                ? request
-                : CloneAlertRequest(request, preparedVideo);
-
-            Application.Current.Dispatcher.Invoke(() =>
-            {
-                _requestsInternal.Insert(0, new HistoryItemViewModel(finalRequest, isIncoming: true));
-                StatusMessage = $"Новая заявка от {finalRequest.ViewerName}";
-                _overlayManager.ShowAlert(finalRequest);
-            });
-        }
-        catch (Exception ex)
-        {
-            Application.Current.Dispatcher.Invoke(() =>
-            {
-                StatusMessage = $"Ошибка получения алерта: {ex.Message}";
-            });
-        }
-    }
-
-    private async Task<AlertVideo> EnsureVideoReadyForPlaybackAsync(AlertVideo video)
-    {
-        if (video.Source.IsFile && File.Exists(video.Source.LocalPath))
-        {
-            return video;
-        }
-
-        var inlineUri = await TryRestoreInlineVideoAsync(video);
-        if (inlineUri != null)
-        {
-            return CloneAlertVideo(video, sourceOverride: inlineUri, inlineDataOverride: null);
-        }
-
-        var downloadedUri = await TryDownloadFromOriginalAsync(video);
-        if (downloadedUri != null)
-        {
-            return CloneAlertVideo(video, sourceOverride: downloadedUri, inlineDataOverride: null);
-        }
-
-        return video;
-    }
-
-    private async Task<Uri?> TryRestoreInlineVideoAsync(AlertVideo video)
-    {
-        if (video.InlineData is { Length: > 0 })
-        {
-            return await _localVideoService.SaveInlineVideoAsync(video.InlineData, video.InlineFileName);
-        }
-
-        return null;
-    }
-
-    private async Task<Uri?> TryDownloadFromOriginalAsync(AlertVideo video)
-    {
-        var originalUrl = ResolveOriginalUrl(video);
-        if (string.IsNullOrWhiteSpace(originalUrl) || !VideoUrlHelper.ShouldForceDownload(originalUrl))
-        {
-            return null;
-        }
-
-        var cacheKey = $"{video.Id}:{originalUrl}";
-        if (_downloadedVideoCache.TryGetValue(cacheKey, out var cachedUri))
-        {
-            if (cachedUri.IsFile && File.Exists(cachedUri.LocalPath))
-            {
-                return cachedUri;
-            }
-
-            _downloadedVideoCache.TryRemove(cacheKey, out _);
-        }
-
-        var incomingDir = _localVideoService.GetIncomingCacheDirectory();
-        var localPath = await _videoDownloader.DownloadVideoAsync(originalUrl, incomingDir);
-        var uri = new Uri(localPath);
-        _downloadedVideoCache[cacheKey] = uri;
-        return uri;
-    }
-
-    private async Task<AlertVideo> PrepareVideoForSendingAsync(AlertVideo video)
-    {
-        var originalUrl = ResolveOriginalUrl(video);
-        var canShareViaUrl = !string.IsNullOrWhiteSpace(originalUrl) && VideoUrlHelper.ShouldForceDownload(originalUrl);
-
-        byte[]? inlineData = null;
-        string? inlineFileName = null;
-
-        if (video.Source.IsFile && File.Exists(video.Source.LocalPath) && !canShareViaUrl)
-        {
-            inlineData = await File.ReadAllBytesAsync(video.Source.LocalPath);
-            inlineFileName = Path.GetFileName(video.Source.LocalPath);
-        }
-
-        return CloneAlertVideo(
-            video,
-            sourceOverride: video.Source,
-            inlineDataOverride: inlineData,
-            inlineFileNameOverride: inlineFileName,
-            originalUrlOverride: originalUrl);
-    }
-
-    private static AlertRequest CloneAlertRequest(AlertRequest source, AlertVideo videoOverride)
-    {
-        return new AlertRequest
-        {
-            Id = source.Id,
-            Video = videoOverride,
-            ViewerName = source.ViewerName,
-            Message = source.Message,
-            TipAmount = source.TipAmount,
-            SubmittedAt = source.SubmittedAt,
-            Status = source.Status,
-            RecipientUserId = source.RecipientUserId
-        };
-    }
-
-    private static AlertVideo CloneAlertVideo(
-        AlertVideo source,
-        Uri? sourceOverride = null,
-        byte[]? inlineDataOverride = null,
-        string? inlineFileNameOverride = null,
-        string? originalUrlOverride = null)
-    {
-        return new AlertVideo
-        {
-            Id = source.Id,
-            Title = source.Title,
-            Description = source.Description,
-            Category = source.Category,
-            Duration = source.Duration,
-            Price = source.Price,
-            Source = sourceOverride ?? source.Source,
-            Thumbnail = source.Thumbnail,
-            IsCommunityFavorite = source.IsCommunityFavorite,
-            IsCustom = source.IsCustom,
-            OriginalUrl = originalUrlOverride ?? source.OriginalUrl,
-            InlineData = inlineDataOverride ?? source.InlineData,
-            InlineFileName = inlineFileNameOverride ?? source.InlineFileName
-        };
-    }
-
-    private static string? ResolveOriginalUrl(AlertVideo video)
-    {
-        if (!string.IsNullOrWhiteSpace(video.OriginalUrl))
-        {
-            return video.OriginalUrl;
-        }
-
-        if (VideoUrlHelper.IsWebVideo(video.Source))
-        {
-            return video.Source.ToString();
-        }
-
-        if (VideoUrlHelper.IsHttpUrl(video.Description))
-        {
-            return video.Description;
-        }
-
-        return null;
-    }
-
-    private Task OpenHistoryLinkAsync(HistoryItemViewModel? item)
-    {
-        if (item?.IsWebVideo == true && !string.IsNullOrWhiteSpace(item.OriginalUrl))
-        {
             try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                await action();
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = errorMessageFactory?.Invoke(ex) ?? $"Ошибка: {ex.Message}";
+            }
+            finally
+            {
+                if (shouldToggleBusy)
                 {
-                    FileName = item.OriginalUrl,
-                    UseShellExecute = true
-                });
-            }
-            catch
-            {
-                StatusMessage = "Не удалось открыть ссылку";
+                    IsBusy = false;
+                }
             }
         }
-        return Task.CompletedTask;
-    }
-
-    private void OnPeerMessageReceived(object? sender, MessageBase message)
-    {
-        switch (message)
-        {
-            case GetFriendsResponse response:
-                Application.Current.Dispatcher.Invoke(() =>
-                {
-                    _friendsInternal.Clear();
-                    foreach (var friend in response.Friends)
-                    {
-                        _friendsInternal.Add(friend);
-                    }
-                    
-                    if (SelectedFriendUserId != null)
-                    {
-                        SelectedFriend = _friendsInternal.FirstOrDefault(f => f.UserId == SelectedFriendUserId);
-                    }
-                });
-                break;
-        }
-    }
-
-    private void OnConnectionChanged(object? sender, bool connected)
-    {
-        Application.Current.Dispatcher.Invoke(async () =>
-        {
-            IsConnected = connected && _peerMessenger.IsAuthenticated;
-            if (connected && _peerMessenger.IsAuthenticated)
-            {
-                await OnConnectionEstablished();
-            }
-            else if (connected)
-            {
-                ConnectionStatus = "Подключено, требуется авторизация";
-            }
-            else
-            {
-                ConnectionStatus = "Нет соединения с сервером";
-            }
-        });
-    }
-
-    private async Task OnConnectionEstablished()
-    {
-        ConnectionStatus = $"Подключено как {_peerMessenger.UserLogin ?? _peerMessenger.UserEmail}";
-        var userId = _peerMessenger.UserLogin ?? "default";
-        _localVideoService.Initialize(userId);
-        await LoadCatalogAsync();
-
-        try 
-        {
-            await _peerMessenger.SendMessageAsync(new GetFriendsRequest());
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Ошибка загрузки друзей: {ex.Message}");
-        }
-    }
-
-    private Task OpenFriendsWindowAsync()
-    {
-        if (Application.Current?.MainWindow is MainWindow mainWindow)
-        {
-            mainWindow.OpenFriendsWindow();
-        }
-        return Task.CompletedTask;
-    }
-
-    private async Task DeleteVideoAsync(AlertVideo? video)
-    {
-        if (video == null) return;
-
-        var result = MessageBox.Show($"Вы уверены, что хотите удалить \"{video.Title}\"?", "Удаление видео", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (result != MessageBoxResult.Yes) return;
-
-        try
-        {
-            await _localVideoService.DeleteVideoAsync(video.Id);
-            _allVideos.Remove(video);
-            ApplyFilters();
-            StatusMessage = "Видео удалено";
-            if (SelectedVideo == video) SelectedVideo = null;
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Ошибка удаления: {ex.Message}";
-        }
-    }
-
-    private bool CanDeleteVideo(AlertVideo? video)
-    {
-        return video != null && video.IsCustom && !IsGlobalLibrary;
     }
 
     public void Dispose()
