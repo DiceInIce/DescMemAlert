@@ -34,11 +34,11 @@ public sealed class PeerMessenger : IDisposable
 
         var url = $"http://{serverAddress}:{serverPort}/alerthub";
         _hubConnection = new HubConnectionBuilder()
-            .AddJsonProtocol()
             .WithUrl(url, options =>
             {
                 options.Transports = HttpTransportType.WebSockets | HttpTransportType.LongPolling;
-                options.MaximumReceiveMessageSize = MaxMessageSizeBytes;
+                options.TransportMaxBufferSize = MaxMessageSizeBytes;
+                options.ApplicationMaxBufferSize = MaxMessageSizeBytes;
                 options.CloseTimeout = TimeSpan.FromMinutes(2);
             })
             .WithAutomaticReconnect()
