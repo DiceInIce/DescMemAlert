@@ -74,7 +74,10 @@ public class LocalVideoService
             Source = new Uri(destPath),
             Thumbnail = thumbResult.Thumbnail,
             IsCustom = true,
-            Duration = thumbResult.Duration
+            Duration = thumbResult.Duration,
+            OriginalUrl = null,
+            InlineData = null,
+            InlineFileName = Path.GetFileName(filePath)
         };
 
         _localVideos.Insert(0, video);
@@ -135,7 +138,10 @@ public class LocalVideoService
             Source = new Uri(destPath),
             Thumbnail = thumbnail,
             IsCustom = true,
-            Duration = thumbResult.Duration
+            Duration = thumbResult.Duration,
+            OriginalUrl = originalUrl,
+            InlineData = null,
+            InlineFileName = Path.GetFileName(filePath)
         };
 
         _localVideos.Insert(0, video);
@@ -203,7 +209,10 @@ public class LocalVideoService
             Source = uri,
             Thumbnail = thumbnail,
             IsCustom = true,
-            Duration = duration
+            Duration = duration,
+            OriginalUrl = url,
+            InlineData = null,
+            InlineFileName = null
         };
 
         _localVideos.Insert(0, video);
@@ -240,6 +249,44 @@ public class LocalVideoService
 
         _localVideos.Remove(video);
         await SaveMetadataAsync();
+    }
+
+    public string GetUserVideosDirectory()
+    {
+        if (!IsInitialized) throw new InvalidOperationException("Service not initialized");
+        return _userVideosPath!;
+    }
+
+    public string GetIncomingCacheDirectory()
+    {
+        var baseDir = GetUserVideosDirectory();
+        var incomingDir = Path.Combine(baseDir, "IncomingCache");
+        if (!Directory.Exists(incomingDir))
+        {
+            Directory.CreateDirectory(incomingDir);
+        }
+
+        return incomingDir;
+    }
+
+    public async Task<Uri> SaveInlineVideoAsync(byte[] data, string? suggestedFileName)
+    {
+        if (data == null || data.Length == 0)
+        {
+            throw new ArgumentException("Video data is empty", nameof(data));
+        }
+
+        var incomingDir = GetIncomingCacheDirectory();
+        var extension = Path.GetExtension(suggestedFileName ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            extension = ".mp4";
+        }
+
+        var fileName = $"{Guid.NewGuid():N}{extension}";
+        var filePath = Path.Combine(incomingDir, fileName);
+        await File.WriteAllBytesAsync(filePath, data);
+        return new Uri(filePath);
     }
 
     private async Task SaveMetadataAsync()

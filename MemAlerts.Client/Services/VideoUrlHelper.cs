@@ -32,6 +32,32 @@ public static class VideoUrlHelper
         return url.Contains("youtube.com/shorts/", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsYouTubeUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        return url.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) ||
+               url.Contains("youtu.be", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsTikTokUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        return url.Contains("tiktok.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsHttpUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        return value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+               value.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool ShouldForceDownload(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        return IsYouTubeUrl(url) || IsTikTokUrl(url);
+    }
+
     public static Uri GetEmbedUri(Uri sourceUri, bool autoplay = true)
     {
         var url = sourceUri.ToString();

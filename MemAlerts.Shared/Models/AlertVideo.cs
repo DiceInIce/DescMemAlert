@@ -14,5 +14,8 @@ public sealed class AlertVideo
     public Uri Thumbnail { get; init; } = new("https://placehold.co/320x180");
     public bool IsCommunityFavorite { get; init; }
     public bool IsCustom { get; init; }
+    public string? OriginalUrl { get; init; }
+    public byte[]? InlineData { get; init; }
+    public string? InlineFileName { get; init; }
 }
 

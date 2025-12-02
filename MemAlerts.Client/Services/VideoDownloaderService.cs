@@ -11,6 +11,8 @@ namespace MemAlerts.Client.Services;
 public class VideoDownloaderService
 {
     private const string YtDlpFileName = "yt-dlp.exe";
+    private const string DesktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    private const string AndroidUserAgent = "Mozilla/5.0 (Linux; Android 11; Pixel 5 Build/RQ3A.210805.001.A1; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.230 Mobile Safari/537.36";
 
     public bool IsDownloaderAvailable()
     {
@@ -75,12 +77,28 @@ public class VideoDownloaderService
         // Template for filename: "id.ext"
         var outputTemplate = Path.Combine(outputDirectory, "%(id)s.%(ext)s");
         
+        var isYouTube = url.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) || 
+                        url.Contains("youtu.be", StringComparison.OrdinalIgnoreCase);
+        var userAgent = isYouTube ? AndroidUserAgent : DesktopUserAgent;
+        
         // First, get the expected filename using --print to ensure we can find the file later
-        var getFilenameArgs = $"--print \"%(id)s.%(ext)s\" --no-playlist \"{url}\"";
+        var getFilenameArgs = new StringBuilder();
+        AppendArgument(getFilenameArgs, "--print \"%(id)s.%(ext)s\"");
+        AppendArgument(getFilenameArgs, "--no-playlist");
+        AppendArgument(getFilenameArgs, $"--user-agent \"{userAgent}\"");
+        
+        if (isYouTube)
+        {
+            AppendArgument(getFilenameArgs, "--referer \"https://www.youtube.com/\"");
+            AppendArgument(getFilenameArgs, "--extractor-args \"youtube:player_client=android\"");
+        }
+        
+        AppendArgument(getFilenameArgs, $"\"{url}\"");
+        
         var filenameInfo = new ProcessStartInfo
         {
             FileName = ytDlpPath,
-            Arguments = getFilenameArgs,
+            Arguments = getFilenameArgs.ToString(),
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -100,24 +118,29 @@ public class VideoDownloaderService
             }
         }
         
-        // Check if it's YouTube Shorts to use optimized format selector
-        var isYouTubeShorts = VideoUrlHelper.IsYouTubeShorts(url);
-        
         // Build arguments for yt-dlp
         var arguments = new System.Text.StringBuilder();
         
-        if (isYouTubeShorts)
+        // Anti-bot detection measures:
+        // Use a modern browser user agent to avoid detection
+        AppendArgument(arguments, $"--user-agent \"{userAgent}\"");
+        
+        // Add referer header to make requests look more legitimate
+        if (isYouTube)
         {
-            // For YouTube Shorts, use a simpler and more reliable format selector
-            // Use bestvideo+bestaudio to ensure we get both streams, then merge
-            // This is more reliable than trying to get pre-merged formats
-            arguments.Append("-f \"bestvideo+bestaudio/best\"");
-            arguments.Append(" --extractor-args \"youtube:player_client=android\"");
+            AppendArgument(arguments, "--referer \"https://www.youtube.com/\"");
+        }
+        
+        if (isYouTube)
+        {
+            // Force Android client to bypass SABR restrictions without needing an external JS runtime
+            AppendArgument(arguments, "-f \"bestvideo+bestaudio/best\"");
+            AppendArgument(arguments, "--extractor-args \"youtube:player_client=android\"");
         }
         else
         {
-            // For regular videos, prefer separate streams for better quality
-            arguments.Append("-f \"bestvideo+bestaudio/best\"");
+            // For other platforms, prefer separate streams for better quality
+            AppendArgument(arguments, "-f \"bestvideo+bestaudio/best\"");
         }
         
         // Common options:
@@ -125,12 +148,12 @@ public class VideoDownloaderService
         // --no-playlist: Download only single video
         // --no-part: Don't use .part files (ensures complete file)
         // --progress: Show progress (helps with debugging)
-        arguments.Append(" --merge-output-format mp4");
-        arguments.Append(" --no-playlist");
-        arguments.Append(" --no-part");
+        AppendArgument(arguments, "--merge-output-format mp4");
+        AppendArgument(arguments, "--no-playlist");
+        AppendArgument(arguments, "--no-part");
         
-        arguments.Append($" -o \"{outputTemplate}\"");
-        arguments.Append($" \"{url}\"");
+        AppendArgument(arguments, $"-o \"{outputTemplate}\"");
+        AppendArgument(arguments, $"\"{url}\"");
         
         var startInfo = new ProcessStartInfo
         {
@@ -249,6 +272,15 @@ public class VideoDownloaderService
         }
 
         throw new Exception($"Не удалось найти скачанный файл в папке: {outputDirectory}");
+    }
+    
+    private static void AppendArgument(StringBuilder builder, string argument)
+    {
+        if (builder.Length > 0)
+        {
+            builder.Append(' ');
+        }
+        builder.Append(argument);
     }
 }
 

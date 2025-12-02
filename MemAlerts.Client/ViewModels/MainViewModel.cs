@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -18,6 +19,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly PeerMessenger _peerMessenger;
     private readonly AlertOverlayManager _overlayManager;
     private readonly LocalVideoService _localVideoService;
+    private readonly VideoDownloaderService _videoDownloader = new();
+    private readonly ConcurrentDictionary<string, Uri> _downloadedVideoCache = new();
     
     private readonly ObservableCollection<AlertVideo> _catalogInternal = new();
     private readonly ObservableCollection<HistoryItemViewModel> _requestsInternal = new();
@@ -263,8 +266,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var userId = UserLogin ?? "default";
             var videosDir = Path.Combine(appData, "MemAlerts", "Users", userId, "Videos");
             
-            var downloader = new VideoDownloaderService();
-            var filePath = await Task.Run(() => downloader.DownloadVideoAsync(url, videosDir));
+            var filePath = await _videoDownloader.DownloadVideoAsync(url, videosDir);
             
             var title = "Downloaded Video";
             try 
@@ -436,8 +438,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             var senderName = UserLogin ?? ViewerName;
             
+            var preparedVideo = await PrepareVideoForSendingAsync(SelectedVideo);
+
             var request = await _service.SubmitRequestAsync(
-                SelectedVideo,
+                preparedVideo,
                 senderName,
                 CustomMessage,
                 TipAmount);
@@ -582,12 +586,172 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void OnPeerRequestReceived(object? sender, AlertRequest e)
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        _ = HandleIncomingAlertAsync(e);
+    }
+
+    private async Task HandleIncomingAlertAsync(AlertRequest request)
+    {
+        try
         {
-            _requestsInternal.Insert(0, new HistoryItemViewModel(e, isIncoming: true));
-            StatusMessage = $"Новая заявка от {e.ViewerName}";
-            _overlayManager.ShowAlert(e);
-        });
+            var preparedVideo = await EnsureVideoReadyForPlaybackAsync(request.Video);
+            var finalRequest = ReferenceEquals(preparedVideo, request.Video)
+                ? request
+                : CloneAlertRequest(request, preparedVideo);
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                _requestsInternal.Insert(0, new HistoryItemViewModel(finalRequest, isIncoming: true));
+                StatusMessage = $"Новая заявка от {finalRequest.ViewerName}";
+                _overlayManager.ShowAlert(finalRequest);
+            });
+        }
+        catch (Exception ex)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                StatusMessage = $"Ошибка получения алерта: {ex.Message}";
+            });
+        }
+    }
+
+    private async Task<AlertVideo> EnsureVideoReadyForPlaybackAsync(AlertVideo video)
+    {
+        if (video.Source.IsFile && File.Exists(video.Source.LocalPath))
+        {
+            return video;
+        }
+
+        var inlineUri = await TryRestoreInlineVideoAsync(video);
+        if (inlineUri != null)
+        {
+            return CloneAlertVideo(video, sourceOverride: inlineUri, inlineDataOverride: null);
+        }
+
+        var downloadedUri = await TryDownloadFromOriginalAsync(video);
+        if (downloadedUri != null)
+        {
+            return CloneAlertVideo(video, sourceOverride: downloadedUri, inlineDataOverride: null);
+        }
+
+        return video;
+    }
+
+    private async Task<Uri?> TryRestoreInlineVideoAsync(AlertVideo video)
+    {
+        if (video.InlineData is { Length: > 0 })
+        {
+            return await _localVideoService.SaveInlineVideoAsync(video.InlineData, video.InlineFileName);
+        }
+
+        return null;
+    }
+
+    private async Task<Uri?> TryDownloadFromOriginalAsync(AlertVideo video)
+    {
+        var originalUrl = ResolveOriginalUrl(video);
+        if (string.IsNullOrWhiteSpace(originalUrl) || !VideoUrlHelper.ShouldForceDownload(originalUrl))
+        {
+            return null;
+        }
+
+        var cacheKey = $"{video.Id}:{originalUrl}";
+        if (_downloadedVideoCache.TryGetValue(cacheKey, out var cachedUri))
+        {
+            if (cachedUri.IsFile && File.Exists(cachedUri.LocalPath))
+            {
+                return cachedUri;
+            }
+
+            _downloadedVideoCache.TryRemove(cacheKey, out _);
+        }
+
+        var incomingDir = _localVideoService.GetIncomingCacheDirectory();
+        var localPath = await _videoDownloader.DownloadVideoAsync(originalUrl, incomingDir);
+        var uri = new Uri(localPath);
+        _downloadedVideoCache[cacheKey] = uri;
+        return uri;
+    }
+
+    private async Task<AlertVideo> PrepareVideoForSendingAsync(AlertVideo video)
+    {
+        var originalUrl = ResolveOriginalUrl(video);
+        var canShareViaUrl = !string.IsNullOrWhiteSpace(originalUrl) && VideoUrlHelper.ShouldForceDownload(originalUrl);
+
+        byte[]? inlineData = null;
+        string? inlineFileName = null;
+
+        if (video.Source.IsFile && File.Exists(video.Source.LocalPath) && !canShareViaUrl)
+        {
+            inlineData = await File.ReadAllBytesAsync(video.Source.LocalPath);
+            inlineFileName = Path.GetFileName(video.Source.LocalPath);
+        }
+
+        return CloneAlertVideo(
+            video,
+            sourceOverride: video.Source,
+            inlineDataOverride: inlineData,
+            inlineFileNameOverride: inlineFileName,
+            originalUrlOverride: originalUrl);
+    }
+
+    private static AlertRequest CloneAlertRequest(AlertRequest source, AlertVideo videoOverride)
+    {
+        return new AlertRequest
+        {
+            Id = source.Id,
+            Video = videoOverride,
+            ViewerName = source.ViewerName,
+            Message = source.Message,
+            TipAmount = source.TipAmount,
+            SubmittedAt = source.SubmittedAt,
+            Status = source.Status,
+            RecipientUserId = source.RecipientUserId
+        };
+    }
+
+    private static AlertVideo CloneAlertVideo(
+        AlertVideo source,
+        Uri? sourceOverride = null,
+        byte[]? inlineDataOverride = null,
+        string? inlineFileNameOverride = null,
+        string? originalUrlOverride = null)
+    {
+        return new AlertVideo
+        {
+            Id = source.Id,
+            Title = source.Title,
+            Description = source.Description,
+            Category = source.Category,
+            Duration = source.Duration,
+            Price = source.Price,
+            Source = sourceOverride ?? source.Source,
+            Thumbnail = source.Thumbnail,
+            IsCommunityFavorite = source.IsCommunityFavorite,
+            IsCustom = source.IsCustom,
+            OriginalUrl = originalUrlOverride ?? source.OriginalUrl,
+            InlineData = inlineDataOverride ?? source.InlineData,
+            InlineFileName = inlineFileNameOverride ?? source.InlineFileName
+        };
+    }
+
+    private static string? ResolveOriginalUrl(AlertVideo video)
+    {
+        if (!string.IsNullOrWhiteSpace(video.OriginalUrl))
+        {
+            return video.OriginalUrl;
+        }
+
+        if (VideoUrlHelper.IsWebVideo(video.Source))
+        {
+            return video.Source.ToString();
+        }
+
+        if (VideoUrlHelper.IsHttpUrl(video.Description))
+        {
+            return video.Description;
+        }
+
+        return null;
     }
 
     private Task OpenHistoryLinkAsync(HistoryItemViewModel? item)
