@@ -7,9 +7,10 @@
         mc:Ignorable="d"
         Title="MemAlerts - Вход"
         Height="520"
+        MinHeight="530"
         Width="420"
-        Background="{DynamicResource MaterialDesignPaper}"
-        TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+        Background="{DynamicResource AppBackgroundBrush}"
+        TextElement.Foreground="{DynamicResource PrimaryTextBrush}"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         ResizeMode="NoResize">
@@ -28,10 +29,12 @@
         </Grid.RowDefinitions>
 
         <!-- Header with Drag and Close -->
-        <materialDesign:ColorZone Mode="PrimaryMid" 
-                                  Padding="16" 
-                                  materialDesign:ElevationAssist.Elevation="Dp4"
-                                  MouseLeftButtonDown="ColorZone_MouseLeftButtonDown">
+        <Border Grid.Row="0"
+                Background="{DynamicResource PrimaryGradient}"
+                Padding="16"
+                CornerRadius="14"
+                Margin="14, 14, 14, 0"
+                MouseLeftButtonDown="ColorZone_MouseLeftButtonDown">
             <Grid>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                     <materialDesign:PackIcon Kind="YoutubeTv" Width="24" Height="24" VerticalAlignment="Center" Margin="0 0 8 0"/>
@@ -48,62 +51,71 @@
                     <materialDesign:PackIcon Kind="WindowClose" Width="20" Height="20"/>
                 </Button>
             </Grid>
-        </materialDesign:ColorZone>
+        </Border>
 
-        <Grid Grid.Row="1" Margin="30">
-            <StackPanel>
-                <TextBlock Text="Вход в систему" 
-                           FontSize="24" 
-                           FontWeight="Bold" 
-                           HorizontalAlignment="Center"
-                           Margin="0 0 0 25" />
-                
-                <TextBox x:Name="LoginTextBox"
-                         Text="{Binding Login, UpdateSourceTrigger=PropertyChanged}"
-                         materialDesign:HintAssist.Hint="Логин или Email"
-                         Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                         Margin="0 0 0 16" />
+        <Grid Grid.Row="1" Margin="14" >
+            <Border Background="{DynamicResource CardBrush}"
+                    CornerRadius="16"
+                    Padding="32"
+                    BorderBrush="{DynamicResource BorderColor}"
+                    BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="Вход в систему" 
+                               FontSize="24" 
+                               FontWeight="Bold" 
+                               HorizontalAlignment="Center"
+                               Margin="0,0,0,16" />
+                    
+                    <TextBox x:Name="LoginTextBox"
+                             Text="{Binding Login, UpdateSourceTrigger=PropertyChanged}"
+                             materialDesign:HintAssist.Hint="Логин или Email"
+                             Style="{StaticResource AppOutlinedTextBox}"
+                             MinHeight="48"
+                             Margin="0,0,0,16" />
 
-                <TextBox x:Name="EmailTextBox"
-                         Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}"
-                         materialDesign:HintAssist.Hint="Email (для регистрации)"
-                         Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                         Margin="0 0 0 16" />
+                    <TextBox x:Name="EmailTextBox"
+                             Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}"
+                             materialDesign:HintAssist.Hint="Email (для регистрации)"
+                             Style="{StaticResource AppOutlinedTextBox}"
+                             MinHeight="48"
+                             Margin="0,0,0,16" />
 
-                <PasswordBox x:Name="PasswordBox"
-                             materialDesign:HintAssist.Hint="Пароль"
-                             Style="{StaticResource MaterialDesignOutlinedPasswordBox}"
-                             Margin="0 0 0 16"
-                             PasswordChanged="PasswordBox_PasswordChanged" />
+                    <PasswordBox x:Name="PasswordBox"
+                                 materialDesign:HintAssist.Hint="Пароль"
+                                 Style="{StaticResource AppOutlinedPasswordBox}"
+                                 MinHeight="48"
+                                 Margin="0,0,0,16"
+                                 PasswordChanged="PasswordBox_PasswordChanged" />
 
-                <TextBlock Text="{Binding ErrorMessage}" 
-                           Foreground="#EF4444" 
-                           Margin="0 0 0 12"
-                           TextWrapping="Wrap"
-                           MinHeight="20"
-                           Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <TextBlock Text="{Binding ErrorMessage}" 
+                               Foreground="#EF4444" 
+                               TextWrapping="Wrap"
+                               MinHeight="20"
+                               Margin="0,0,0,16"
+                               Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
-                <Button Content="ВОЙТИ"
-                        Command="{Binding LoginCommand}"
-                        Style="{StaticResource MaterialDesignRaisedButton}"
-                        Height="45"
-                        Margin="0 0 0 12"
-                        IsEnabled="{Binding IsNotBusy}" />
+                    <Button Content="ВОЙТИ"
+                            Command="{Binding LoginCommand}"
+                            Style="{StaticResource MaterialDesignRaisedButton}"
+                            MinHeight="48"
+                            Margin="0,0,0,12"
+                            IsEnabled="{Binding IsNotBusy}" />
 
-                <Button Content="ЗАРЕГИСТРИРОВАТЬСЯ"
-                        Command="{Binding RegisterCommand}"
-                        Style="{StaticResource MaterialDesignOutlinedButton}"
-                        Height="45"
-                        Margin="0 0 0 12"
-                        IsEnabled="{Binding IsNotBusy}" Click="Button_Click" />
+                    <Button Content="ЗАРЕГИСТРИРОВАТЬСЯ"
+                            Command="{Binding RegisterCommand}"
+                            Style="{StaticResource MaterialDesignOutlinedButton}"
+                            MinHeight="48"
+                            Margin="0,0,0,12"
+                            IsEnabled="{Binding IsNotBusy}"
+                            Click="Button_Click" />
 
-                <TextBlock Text="{Binding StatusMessage}" 
-                           Foreground="#9CA3AF" 
-                           FontSize="11"
-                           HorizontalAlignment="Center"
-                           MinHeight="16"
-                           Margin="0 8 0 0" />
-            </StackPanel>
+                    <TextBlock Text="{Binding StatusMessage}" 
+                               Foreground="{DynamicResource SecondaryTextBrush}" 
+                               FontSize="11"
+                               HorizontalAlignment="Center"
+                               MinHeight="16" />
+                </StackPanel>
+            </Border>
         </Grid>
     </Grid>
 </Window>

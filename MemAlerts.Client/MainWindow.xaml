@@ -10,12 +10,12 @@
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         mc:Ignorable="d"
         Title="MemAlerts Client"
-        Height="900"
-        MinHeight="900"
+        Height="915"
+        MinHeight="915"
         Width="1280"
         MinWidth="1280"
-        Background="{DynamicResource MaterialDesignPaper}"
-        TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+        Background="{DynamicResource AppBackgroundBrush}"
+        TextElement.Foreground="{DynamicResource PrimaryTextBrush}"
         TextElement.FontWeight="Regular"
         TextElement.FontSize="13"
         FontFamily="{DynamicResource MaterialDesignFont}"
@@ -40,10 +40,12 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <materialDesign:ColorZone Mode="PrimaryMid" 
-                                  Padding="16" 
-                                  materialDesign:ElevationAssist.Elevation="Dp4"
-                                  MouseLeftButtonDown="ColorZone_MouseLeftButtonDown">
+        <Border Grid.Row="0"
+                Background="{DynamicResource PrimaryGradient}"
+                Padding="16"
+                CornerRadius="16"
+                Margin="16,16,16,0"
+                MouseLeftButtonDown="ColorZone_MouseLeftButtonDown">
             <DockPanel>
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
                     <Button Style="{StaticResource MaterialDesignIconForegroundButton}"
@@ -57,7 +59,7 @@
                     <TextBlock Text="MemAlerts" FontSize="22" FontWeight="Bold" VerticalAlignment="Center" />
                 </StackPanel>
 
-                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0, 0, 4, 0">
                     <Button Style="{StaticResource MaterialDesignIconForegroundButton}"
                             Command="{Binding OpenFriendsWindowCommand}"
                             ToolTip="Друзья"
@@ -67,7 +69,7 @@
                         <materialDesign:PackIcon Kind="AccountMultiple" Width="20" Height="20" />
                     </Button>
                     
-                    <Border Background="#20FFFFFF" CornerRadius="12" Padding="12,6" Margin="0,0,8,0" VerticalAlignment="Center">
+                    <Border Background="#1AFFFFFF" CornerRadius="12" Padding="12,6" Margin="0,0,8,0" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="Web" Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,8,0" Opacity="0.8"/>
                             <TextBlock Text="{Binding ConnectionStatus}" VerticalAlignment="Center" FontSize="11" FontWeight="Medium" />
@@ -102,15 +104,19 @@
 
                 <TextBlock />
             </DockPanel>
-        </materialDesign:ColorZone>
+        </Border>
 
-        <Grid Grid.Row="1" Margin="16">
+        <Grid Grid.Row="1" Margin="16, 16, 16, 10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="350" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <materialDesign:Card Grid.Column="0" UniformCornerRadius="8" materialDesign:ElevationAssist.Elevation="Dp2" VerticalAlignment="Stretch">
+            <materialDesign:Card Grid.Column="0"
+                                  UniformCornerRadius="12"
+                                  Background="{DynamicResource CardBrush}"
+                                  materialDesign:ElevationAssist.Elevation="Dp2"
+                                  VerticalAlignment="Stretch">
                     <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -147,7 +153,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBox Grid.Column="0"
-                                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                 Style="{StaticResource AppOutlinedTextBox}"
                                  materialDesign:HintAssist.Hint="Поиск мемов..."
                                  materialDesign:TextFieldAssist.HasClearButton="True"
                                  Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
@@ -182,7 +188,7 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
 
-                                    <Border Width="64" Height="48" CornerRadius="4" ClipToBounds="True" Background="#22000000">
+                                    <Border Width="64" Height="48" CornerRadius="6" ClipToBounds="True" Background="#2214b8a6">
                                         <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
                                     </Border>
 
@@ -222,7 +228,11 @@
                     <RowDefinition Height="2*" />
                 </Grid.RowDefinitions>
 
-                <materialDesign:Card Grid.Row="0" UniformCornerRadius="8" ClipToBounds="True" Background="Black" Margin="0,0,0,16">
+                <materialDesign:Card Grid.Row="0"
+                                      UniformCornerRadius="12"
+                                      ClipToBounds="True"
+                                      Background="{DynamicResource SurfaceBrush}"
+                                      Margin="0,0,0,16">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*" />
@@ -248,7 +258,7 @@
                                    Visibility="Visible"/>
                         </Grid>
                         
-                        <Grid Grid.Row="1" Background="#CC000000">
+                        <Grid Grid.Row="1" Background="#B30b121d">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
@@ -301,10 +311,15 @@
                         <ColumnDefinition Width="3*" />
                     </Grid.ColumnDefinitions>
 
-                    <materialDesign:Card Grid.Column="0" UniformCornerRadius="8" Padding="24" Margin="0,0,8,0" VerticalAlignment="Stretch">
+                    <materialDesign:Card Grid.Column="0"
+                                          UniformCornerRadius="12"
+                                          Padding="24"
+                                          Margin="0,0,8,0"
+                                          Background="{DynamicResource CardBrush}"
+                                          VerticalAlignment="Stretch">
                         <Grid>
                             <StackPanel Orientation="Vertical" HorizontalAlignment="Center" VerticalAlignment="Center" Width="280">
-                                <Grid Margin="0,0,0,24">
+                                <Grid Margin="0,0,0,16">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="*" />
@@ -329,7 +344,7 @@
                                             Margin="4,0,0,0" />
                                 </Grid>
                                 
-                                <ComboBox Style="{StaticResource MaterialDesignOutlinedComboBox}"
+                                <ComboBox Style="{StaticResource AppOutlinedComboBox}"
                                           ItemsSource="{Binding Friends}"
                                           SelectedItem="{Binding SelectedFriend}"
                                           materialDesign:HintAssist.Hint="Кому отправить"
@@ -358,26 +373,34 @@
                         </Grid>
                     </materialDesign:Card>
 
-                    <materialDesign:Card Grid.Column="1" UniformCornerRadius="8" Padding="0" Margin="8,0,0,0" VerticalAlignment="Stretch">
+                    <materialDesign:Card Grid.Column="1"
+                                          UniformCornerRadius="12"
+                                          Padding="0"
+                                          Margin="8,0,0,0"
+                                          Background="{DynamicResource CardBrush}"
+                                          VerticalAlignment="Stretch">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
 
-                            <materialDesign:ColorZone Mode="PrimaryLight" Padding="16,8">
+                            <Border Background="{DynamicResource ToolbarBrush}" Padding="16,8" CornerRadius="12,12,0,0">
                                 <DockPanel>
                                     <Button DockPanel.Dock="Right"
                                             Style="{StaticResource MaterialDesignIconButton}" 
                                             Command="{Binding RefreshRequestsCommand}"
                                             ToolTip="Обновить очередь"
-                                            Width="24" Height="24"
-                                            Foreground="{DynamicResource PrimaryHueMidForegroundBrush}">
+                                            Width="28" Height="28"
+                                            Foreground="{DynamicResource AccentBrush}">
                                         <materialDesign:PackIcon Kind="Refresh" Width="16" Height="16" />
                                     </Button>
-                                    <TextBlock Text="История" FontWeight="Bold" VerticalAlignment="Center" Foreground="{DynamicResource PrimaryHueMidForegroundBrush}"/>
+                                    <TextBlock Text="История"
+                                               FontWeight="Bold"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource PrimaryTextBrush}"/>
                                 </DockPanel>
-                            </materialDesign:ColorZone>
+                            </Border>
 
                             <ListView Grid.Row="1" ItemsSource="{Binding ActiveRequests}" Padding="0">
                                 <ListView.ItemTemplate>
@@ -418,11 +441,11 @@
                                                 </StackPanel>
 
                                                 <Border Grid.Column="2" 
-                                                        Background="{DynamicResource MaterialDesignDivider}" 
+                                                        Background="{DynamicResource DividerBrush}" 
                                                         CornerRadius="4" 
                                                         Padding="6,2" 
                                                         VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Status}" FontSize="9" Opacity="0.8"/>
+                                                    <TextBlock Text="{Binding Status}" FontSize="9" Foreground="{DynamicResource PrimaryTextBrush}" Opacity="0.7"/>
                                                 </Border>
                                             </Grid>
                                         </Border>
@@ -435,11 +458,13 @@
             </Grid>
         </Grid>
 
-        <materialDesign:ColorZone Grid.Row="2" Mode="Standard" Padding="12,4">
-            <DockPanel>
-                <TextBlock Text="{Binding StatusMessage}" FontSize="11" />
-            </DockPanel>
-        </materialDesign:ColorZone>
+        <Border Grid.Row="2"
+                Margin="16,0,16,10"
+                Padding="12,6"
+                CornerRadius="12"
+                Background="{DynamicResource ToolbarBrush}">
+            <TextBlock Text="{Binding StatusMessage}" FontSize="11" Foreground="{DynamicResource SecondaryTextBrush}" />
+        </Border>
 
         <Grid x:Name="SideMenuOverlay"
               Grid.RowSpan="3"
@@ -452,8 +477,9 @@
 
             <Border x:Name="SideMenuPanel"
                     Width="320"
-                    Background="{DynamicResource MaterialDesignPaper}"
-                    materialDesign:ElevationAssist.Elevation="Dp6">
+                    Background="{DynamicResource SurfaceBrush}"
+                    materialDesign:ElevationAssist.Elevation="Dp6"
+                    CornerRadius="0,12,12,0">
                 <Border.RenderTransform>
                     <TranslateTransform x:Name="SideMenuTransform" X="-320"/>
                 </Border.RenderTransform>

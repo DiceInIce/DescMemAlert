@@ -38,7 +38,7 @@
             <!-- Content -->
             <StackPanel Grid.Row="1">
                 <TextBox x:Name="UrlTextBox"
-                         Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                         Style="{StaticResource AppOutlinedTextBox}"
                          materialDesign:HintAssist.Hint="Вставьте ссылку..."
                          materialDesign:TextFieldAssist.HasClearButton="True"
                          Foreground="{DynamicResource MaterialDesignBody}"

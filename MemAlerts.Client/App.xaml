@@ -7,22 +7,64 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <materialDesign:BundledTheme BaseTheme="Dark" PrimaryColor="DeepPurple" SecondaryColor="Lime" />
+                <materialDesign:BundledTheme BaseTheme="Dark"
+                                             PrimaryColor="Indigo"
+                                             SecondaryColor="Teal" />
                 <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesign2.Defaults.xaml" />
             </ResourceDictionary.MergedDictionaries>
             
             <conv:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
             
-            <!-- Custom Resources for AlertOverlayWindow -->
-            <SolidColorBrush x:Key="BackgroundCard" Color="#1e1e1e" />
-            <SolidColorBrush x:Key="BackgroundDark" Color="#000000" />
-            <SolidColorBrush x:Key="PrimaryBlue" Color="#673AB7" /> <!-- DeepPurple 500 -->
-            <SolidColorBrush x:Key="BorderColor" Color="#333333" />
+            <!-- App palette: deep blue base with teal highlights -->
+            <SolidColorBrush x:Key="AppBackgroundBrush" Color="#070c14" />
+            <SolidColorBrush x:Key="SurfaceBrush" Color="#0e1724" />
+            <SolidColorBrush x:Key="CardBrush" Color="#141f2e" />
+            <SolidColorBrush x:Key="ToolbarBrush" Color="#111a27" />
+            <SolidColorBrush x:Key="BorderColor" Color="#1f2b3d" />
+            <SolidColorBrush x:Key="AccentBrush" Color="#22d3ee" />
+            <SolidColorBrush x:Key="AccentBrushMuted" Color="#1ba0c0" />
+            <SolidColorBrush x:Key="PrimaryTextBrush" Color="#ffffff" />
+            <SolidColorBrush x:Key="SecondaryTextBrush" Color="#a3b3c9" />
+            <SolidColorBrush x:Key="DisabledTextBrush" Color="#5c6b80" />
+            <SolidColorBrush x:Key="DividerBrush" Color="#213047" />
+            <SolidColorBrush x:Key="InputBackgroundBrush" Color="#0b121d" />
+            <SolidColorBrush x:Key="HintForegroundBrush" Color="#d9f2ff" />
+            <SolidColorBrush x:Key="SuccessBrush" Color="#44d7b6" />
+            <SolidColorBrush x:Key="WarningBrush" Color="#f7b733" />
             
             <LinearGradientBrush x:Key="PrimaryGradient" StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#673AB7" Offset="0.0" />
-                <GradientStop Color="#512DA8" Offset="1.0" />
+                <GradientStop Color="#2563eb" Offset="0.0" />
+                <GradientStop Color="#0ea5e9" Offset="0.5" />
+                <GradientStop Color="#14b8a6" Offset="1.0" />
             </LinearGradientBrush>
+            <LinearGradientBrush x:Key="SecondaryGradient" StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#0f172a" Offset="0.0" />
+                <GradientStop Color="#0b1c33" Offset="1.0" />
+            </LinearGradientBrush>
+            
+            <!-- Legacy keys used across views -->
+            <SolidColorBrush x:Key="BackgroundCard" Color="#141f2e" />
+            <SolidColorBrush x:Key="BackgroundDark" Color="#070c14" />
+            <SolidColorBrush x:Key="PrimaryBlue" Color="#2563eb" />
+
+            <!-- Input styles -->
+            <Style x:Key="AppOutlinedTextBox"
+                   TargetType="TextBox"
+                   BasedOn="{StaticResource MaterialDesignOutlinedTextBox}">
+                <Setter Property="materialDesign:HintAssist.Foreground" Value="{DynamicResource HintForegroundBrush}" />
+            </Style>
+
+            <Style x:Key="AppOutlinedPasswordBox"
+                   TargetType="PasswordBox"
+                   BasedOn="{StaticResource MaterialDesignOutlinedPasswordBox}">
+                <Setter Property="materialDesign:HintAssist.Foreground" Value="{DynamicResource HintForegroundBrush}" />
+            </Style>
+
+            <Style x:Key="AppOutlinedComboBox"
+                   TargetType="ComboBox"
+                   BasedOn="{StaticResource MaterialDesignOutlinedComboBox}">
+                <Setter Property="materialDesign:HintAssist.Foreground" Value="{DynamicResource HintForegroundBrush}" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
