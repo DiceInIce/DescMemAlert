@@ -30,12 +30,12 @@ public sealed class FriendViewModel : ObservableObject, IDisposable
         PendingRequests = new ReadOnlyObservableCollection<FriendInfo>(_pendingRequestsInternal);
         SearchResults = new ReadOnlyObservableCollection<UserInfo>(_searchResultsInternal);
 
-        RefreshFriendsCommand = new AsyncRelayCommand(() => LoadFriendsAsync(), () => !IsBusy, () => IsBusy, v => IsBusy = v);
-        SearchUsersCommand = new AsyncRelayCommand(SearchUsersAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(SearchQuery), () => IsBusy, v => IsBusy = v);
-        SendFriendRequestCommand = new AsyncRelayCommand<UserInfo>(SendFriendRequestAsync, _ => !IsBusy, () => IsBusy, v => IsBusy = v);
-        AcceptFriendRequestCommand = new AsyncRelayCommand<FriendInfo>(AcceptFriendRequestAsync, _ => !IsBusy, () => IsBusy, v => IsBusy = v);
-        RejectFriendRequestCommand = new AsyncRelayCommand<FriendInfo>(RejectFriendRequestAsync, _ => !IsBusy, () => IsBusy, v => IsBusy = v);
-        RemoveFriendCommand = new AsyncRelayCommand<FriendInfo>(RemoveFriendAsync, _ => !IsBusy, () => IsBusy, v => IsBusy = v);
+        RefreshFriendsCommand = new AsyncRelayCommand(() => LoadFriendsAsync(), () => !IsBusy, () => IsBusy);
+        SearchUsersCommand = new AsyncRelayCommand(SearchUsersAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(SearchQuery), () => IsBusy);
+        SendFriendRequestCommand = new AsyncRelayCommand<UserInfo>(SendFriendRequestAsync, _ => !IsBusy, () => IsBusy);
+        AcceptFriendRequestCommand = new AsyncRelayCommand<FriendInfo>(AcceptFriendRequestAsync, _ => !IsBusy, () => IsBusy);
+        RejectFriendRequestCommand = new AsyncRelayCommand<FriendInfo>(RejectFriendRequestAsync, _ => !IsBusy, () => IsBusy);
+        RemoveFriendCommand = new AsyncRelayCommand<FriendInfo>(RemoveFriendAsync, _ => !IsBusy, () => IsBusy);
     }
 
     public ReadOnlyObservableCollection<FriendInfo> Friends { get; }
@@ -185,6 +185,9 @@ public sealed class FriendViewModel : ObservableObject, IDisposable
             case IncomingFriendRequestNotification notification:
                 HandleIncomingFriendRequest(notification);
                 break;
+            case FriendshipChangedNotification notification:
+                HandleFriendshipChanged(notification);
+                break;
         }
     }
 
@@ -243,6 +246,20 @@ public sealed class FriendViewModel : ObservableObject, IDisposable
             _ = LoadFriendsAsync(ignoreBusy: true);
             FriendRequestReceived?.Invoke(this, request);
             StatusMessage = $"Новый запрос от {request.Login}";
+        });
+    }
+
+    private void HandleFriendshipChanged(FriendshipChangedNotification notification)
+    {
+        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+        {
+            _ = LoadFriendsAsync(ignoreBusy: true);
+            StatusMessage = notification.Status switch
+            {
+                FriendshipStatus.Accepted => "Новый друг добавлен",
+                FriendshipStatus.Rejected => "Запрос отклонён",
+                _ => "Список друзей обновлён"
+            };
         });
     }
 

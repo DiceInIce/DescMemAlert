@@ -67,6 +67,12 @@ public sealed class IncomingFriendRequestNotification : MessageBase
     public required FriendInfo FriendRequest { get; init; }
 }
 
+public sealed class FriendshipChangedNotification : MessageBase
+{
+    public required string FriendshipId { get; init; }
+    public FriendshipStatus Status { get; init; }
+}
+
 public sealed class RemoveFriendRequestMessage : MessageBase
 {
     public required string FriendshipId { get; init; }

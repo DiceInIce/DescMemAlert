@@ -94,6 +94,11 @@ public sealed class PeerMessenger : IDisposable
             MessageReceived?.Invoke(this, notification);
         });
 
+        _hubConnection.On<FriendshipChangedNotification>("ReceiveFriendshipChangedNotification", (notification) =>
+        {
+            MessageReceived?.Invoke(this, notification);
+        });
+
         try
         {
             await _hubConnection.StartAsync(cancellationToken);

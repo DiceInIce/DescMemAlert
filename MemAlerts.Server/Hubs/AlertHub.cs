@@ -9,6 +9,7 @@ public interface IAlertClient
 {
     Task ReceiveAlert(AlertRequest request);
     Task ReceiveFriendRequestNotification(IncomingFriendRequestNotification notification);
+    Task ReceiveFriendshipChangedNotification(FriendshipChangedNotification notification);
 }
 
 public class AlertHub : Hub<IAlertClient>
@@ -192,6 +193,16 @@ public class AlertHub : Hub<IAlertClient>
             return new FriendRequestResponse { Success = false, ErrorMessage = "Unauthorized" };
 
         var result = await _friendService.AcceptFriendRequestAsync(request.FriendshipId, userId);
+
+        if (result.Success && result.FriendInfo != null)
+        {
+            await NotifyFriendshipChangedAsync(
+                userId,
+                result.FriendInfo.UserId,
+                result.FriendInfo.FriendshipId,
+                FriendshipStatus.Accepted);
+        }
+
         return new FriendRequestResponse { Success = result.Success, ErrorMessage = result.ErrorMessage };
     }
 
@@ -213,6 +224,26 @@ public class AlertHub : Hub<IAlertClient>
 
         var result = await _friendService.RemoveFriendAsync(request.FriendshipId, userId);
         return new FriendRequestResponse { Success = result.Success, ErrorMessage = result.ErrorMessage };
+    }
+
+    private Task NotifyFriendshipChangedAsync(string userId1, string userId2, string friendshipId, FriendshipStatus status)
+    {
+        if (string.IsNullOrWhiteSpace(userId2))
+        {
+            return Task.CompletedTask;
+        }
+
+        return Task.WhenAll(
+            Clients.Group($"user_{userId1}").ReceiveFriendshipChangedNotification(new FriendshipChangedNotification
+            {
+                FriendshipId = friendshipId,
+                Status = status
+            }),
+            Clients.Group($"user_{userId2}").ReceiveFriendshipChangedNotification(new FriendshipChangedNotification
+            {
+                FriendshipId = friendshipId,
+                Status = status
+            }));
     }
 
     private string? GetCurrentUserId() => Context.Items["UserId"] as string;

@@ -16,6 +16,7 @@ namespace MemAlerts.Shared.Models;
 [JsonDerivedType(typeof(RejectFriendRequestMessage), typeDiscriminator: "reject_friend_request")]
 [JsonDerivedType(typeof(RemoveFriendRequestMessage), typeDiscriminator: "remove_friend_request")]
 [JsonDerivedType(typeof(IncomingFriendRequestNotification), typeDiscriminator: "incoming_friend_request")]
+[JsonDerivedType(typeof(FriendshipChangedNotification), typeDiscriminator: "friendship_changed_notification")]
 public abstract class MessageBase
 {
 }
