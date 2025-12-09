@@ -24,8 +24,6 @@ MONETIZATION_PLAN.md
 *.txt
 
 # Configs (local only)
-config.json
-MemAlerts.Client/config.json
 MemAlerts.Server/config.json
 
 # Data

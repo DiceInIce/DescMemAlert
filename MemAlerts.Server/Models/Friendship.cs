@@ -13,6 +13,6 @@ public sealed class Friendship
     public FriendshipStatus Status { get; set; }
     public string? RequesterId { get; init; }
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
-    public DateTime? AcceptedAt { get; init; }
+    public DateTime? AcceptedAt { get; set; }
 }
 

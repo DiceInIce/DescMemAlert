@@ -25,18 +25,26 @@ builder.Services.AddSignalR(options =>
     options.EnableDetailedErrors = true;
 });
 
-// Register existing services
-builder.Services.AddSingleton<IAuthService>(sp => new FileAuthService(
-    sp.GetRequiredService<ILogger<FileAuthService>>(), 
-    null));
-
-builder.Services.AddSingleton<IFriendService>(sp => new FileFriendService(
-    sp.GetRequiredService<IAuthService>(),
-    sp.GetRequiredService<ILogger<FileFriendService>>(),
-    null));
-
 // Configuration for Port
 builder.Configuration.AddJsonFile("config.json", optional: true, reloadOnChange: true);
+
+// PostgreSQL connection string (config.json ConnectionStrings:PostgreSql or env)
+var connectionString =
+    builder.Configuration.GetConnectionString("PostgreSql") ??
+    builder.Configuration["PostgreSql"] ??
+    builder.Configuration["ConnectionStrings:PostgreSql"];
+
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException("PostgreSQL connection string is not configured.");
+}
+
+// Register services backed by PostgreSQL + Dapper
+builder.Services.AddSingleton<IAuthService>(sp =>
+    new PostgresAuthService(connectionString, sp.GetRequiredService<ILogger<PostgresAuthService>>()));
+
+builder.Services.AddSingleton<IFriendService>(sp =>
+    new PostgresFriendService(connectionString, sp.GetRequiredService<ILogger<PostgresFriendService>>()));
 
 var app = builder.Build();
 
