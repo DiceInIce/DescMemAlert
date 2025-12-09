@@ -6,8 +6,9 @@
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         mc:Ignorable="d"
         Title="MemAlerts - Вход"
-        Height="520"
+        SizeToContent="Height"
         MinHeight="530"
+        MaxHeight="900"
         Width="420"
         Background="{DynamicResource AppBackgroundBrush}"
         TextElement.Foreground="{DynamicResource PrimaryTextBrush}"
@@ -90,15 +91,17 @@
                     <TextBlock Text="{Binding ErrorMessage}" 
                                Foreground="#EF4444" 
                                TextWrapping="Wrap"
+                               TextTrimming="CharacterEllipsis"
                                MinHeight="20"
-                               Margin="0,0,0,16"
+                               Height="32"
+                               Margin="0,0,0,8"
                                Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
                     <Button Content="ВОЙТИ"
                             Command="{Binding LoginCommand}"
                             Style="{StaticResource MaterialDesignRaisedButton}"
                             MinHeight="48"
-                            Margin="0,0,0,12"
+                            Margin="0,0,0,8"
                             IsEnabled="{Binding IsNotBusy}" />
 
                     <Button Content="ЗАРЕГИСТРИРОВАТЬСЯ"
